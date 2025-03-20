@@ -1,5 +1,5 @@
 import logging
-from ..models import Company, CompanyInfo
+from ..models import Company, CompanyInfo, User, UserCompanyInteraction
 
 logger = logging.getLogger(__name__)
 
@@ -59,3 +59,67 @@ class CompanyService:
             logger.error(f"Error fetching company info: {e}")
         
         return company_info
+
+    def get_or_create_user(self, whatsapp_number, name=None):
+        """
+        Get an existing user or create a new one based on WhatsApp number.
+        Updates the name if it has changed.
+        
+        Args:
+            whatsapp_number (str): The WhatsApp number of the user
+            name (str, optional): The user's name from WhatsApp profile
+            
+        Returns:
+            User: The user object
+        """
+        try:
+            # Try to find the user by WhatsApp number
+            try:
+                user = User.objects.get(whatsapp_number=whatsapp_number)
+                
+                # If user exists and name has changed, update it
+                if name and user.name != name:
+                    logger.info(f"Updating name for user {whatsapp_number} from '{user.name}' to '{name}'")
+                    user.name = name
+                    user.save()
+                    
+                return user
+            except User.DoesNotExist:
+                # User doesn't exist, create a new one
+                logger.info(f"Creating new user with WhatsApp number {whatsapp_number}")
+                user = User(
+                    whatsapp_number=whatsapp_number,
+                    name=name
+                )
+                user.save()
+                return user
+        except Exception as e:
+            logger.error(f"Error getting/creating user {whatsapp_number}: {e}")
+            return None
+
+    def record_user_company_interaction(self, user, company):
+        """
+        Record an interaction between a user and a company.
+        
+        Args:
+            user (User): The user object
+            company (Company): The company object
+            
+        Returns:
+            UserCompanyInteraction: The interaction object
+        """
+        try:
+            # Get or create the interaction
+            interaction, created = UserCompanyInteraction.objects.get_or_create(
+                user=user,
+                company=company
+            )
+            
+            # Always update the last_interaction time
+            if not created:
+                interaction.save()  # This will update the auto_now field
+                
+            return interaction
+        except Exception as e:
+            logger.error(f"Error recording interaction between {user} and {company}: {e}")
+            return None

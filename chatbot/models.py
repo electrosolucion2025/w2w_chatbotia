@@ -31,23 +31,31 @@ class CompanyInfo(models.Model):
 
 class User(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
     whatsapp_number = models.CharField(max_length=20)
     name = models.CharField(max_length=255, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
         return f"{self.name or 'Unnamed'} ({self.whatsapp_number})"
+    
+    class Meta:
+        verbose_name = "User"
+        verbose_name_plural = "Users"
 
 class Session(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE)
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     
     def __str__(self):
-        return f"Session {self.id} - {self.company.name} with {self.user}"
+        return f"Session {self.id} - {self.user} with {self.company.name}"
+    
+    class Meta:
+        verbose_name = "Session"
+        verbose_name_plural = "Sessions"
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -61,3 +69,18 @@ class Message(models.Model):
     def __str__(self):
         direction = "User → Bot" if self.is_from_user else "Bot → User"
         return f"{direction}: {self.message_text[:30]}{'...' if len(self.message_text) > 30 else ''}"
+
+class UserCompanyInteraction(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='company_interactions')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='user_interactions')
+    first_interaction = models.DateTimeField(auto_now_add=True)
+    last_interaction = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ('user', 'company')
+        verbose_name = "User-Company Interaction"
+        verbose_name_plural = "User-Company Interactions"
+    
+    def __str__(self):
+        return f"{self.user.name or self.user.whatsapp_number} - {self.company.name}"

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Company, CompanyInfo, User, Session, Message
+from .models import Company, CompanyInfo, User, UserCompanyInteraction, Session, Message
 
 class CompanyInfoInline(admin.TabularInline):
     model = CompanyInfo
@@ -11,26 +11,29 @@ class CompanyAdmin(admin.ModelAdmin):
     search_fields = ('name', 'phone_number')
     list_filter = ('active', 'created_at')
     inlines = [CompanyInfoInline]
-    
-    fieldsets = (
-        ('Información Básica', {
-            'fields': ('name', 'phone_number', 'active')
-        }),
-        ('Configuración de WhatsApp', {
-            'fields': ('whatsapp_api_token', 'whatsapp_phone_number_id'),
-        }),
-    )
+
+class UserCompanyInteractionInline(admin.TabularInline):
+    model = UserCompanyInteraction
+    extra = 0
+    readonly_fields = ('first_interaction', 'last_interaction')
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
-    list_display = ('name', 'whatsapp_number', 'company', 'created_at')
-    list_filter = ('company',)
+    list_display = ('name', 'whatsapp_number', 'created_at')
     search_fields = ('name', 'whatsapp_number')
+    inlines = [UserCompanyInteractionInline]
+
+@admin.register(UserCompanyInteraction)
+class UserCompanyInteractionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'company', 'first_interaction', 'last_interaction')
+    list_filter = ('company', 'first_interaction', 'last_interaction')
+    search_fields = ('user__name', 'user__whatsapp_number', 'company__name')
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'company', 'user', 'started_at', 'ended_at')
+    list_display = ('id', 'user', 'company', 'started_at', 'ended_at')
     list_filter = ('company', 'started_at')
+    search_fields = ('user__name', 'user__whatsapp_number')
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):

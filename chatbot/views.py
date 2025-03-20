@@ -96,7 +96,24 @@ def webhook(request):
                     profile = contacts[0].get("profile", {})
                     contact_name = profile.get("name")
                 
-                logger.info(f"Received message from {from_phone} ({contact_name}): {message_text}")
+                # Get or create the user (independent of company)
+                user = company_service.get_or_create_user(
+                    whatsapp_number=from_phone,
+                    name=contact_name
+                )
+                
+                # If company exists, record the interaction between user and company
+                if company and user:
+                    company_service.record_user_company_interaction(user, company)
+                
+                try:
+                    # Log the message safely without encoding issues
+                    logger.info(f"Received message from {from_phone} ({contact_name}): {message_text}")
+                except UnicodeEncodeError:
+                    # Handle encoding issues with non-ASCII characters
+                    safe_name = contact_name.encode('ascii', 'replace').decode('ascii') if contact_name else None
+                    safe_message = message_text.encode('ascii', 'replace').decode('ascii') if message_text else None
+                    logger.info(f"Received message from {from_phone} ({safe_name}): {safe_message}")
                 
                 # Generate a response using OpenAI
                 ai_response = conversation_service.generate_response(
@@ -106,7 +123,12 @@ def webhook(request):
                 )
                 
                 # Send the AI response back to the user
-                logger.info(f"Sending AI response to {from_phone}: {ai_response}")
+                try:
+                    logger.info(f"Sending AI response to {from_phone}: {ai_response}")
+                except UnicodeEncodeError:
+                    safe_response = ai_response.encode('ascii', 'replace').decode('ascii')
+                    logger.info(f"Sending AI response to {from_phone}: {safe_response}")
+                    
                 response = whatsapp.send_message(from_phone, ai_response)
                 logger.info(f"WhatsApp API Response: {response}")
             
