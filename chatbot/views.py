@@ -144,14 +144,23 @@ def webhook(request):
                 response = whatsapp.send_message(from_phone, ai_response)
                 logger.info(f"WhatsApp API Response: {response}")
                 
-                # Check if this is a farewell message and end session if needed
-                farewell_phrases = ['adios', 'adiós', 'chau', 'hasta luego', 'bye', 'nos vemos', 
-                                    'gracias por todo', 'hasta pronto', 'me despido']
-                
-                if any(phrase in message_text.lower() for phrase in farewell_phrases) and company and user:
-                    # Look for indications that user is ending conversation in their message
+                # Verificar cierre de sesión: MÉTODO 1 - Detectar en respuesta de la IA
+                ai_farewell_phrases = ['chat finalizado', 'conversación finalizada', 'sesión finalizada', 
+                                     'ha sido un placer atenderte', 'gracias por contactarnos']
+
+                if company and user and any(phrase in ai_response.lower() for phrase in ai_farewell_phrases):
+                    # La IA indicó que la conversación ha terminado
                     session_service.end_session_for_user(user, company)
-                    logger.info(f"Sesión finalizada por despedida del usuario: {from_phone}")
+                    logger.info(f"Sesión finalizada por respuesta de cierre de la IA: {from_phone}")
+                # MÉTODO 2 - Detectar en mensaje del usuario (respaldo)
+                elif company and user:
+                    user_farewell_phrases = ['adios', 'adiós', 'chau', 'hasta luego', 'bye', 'nos vemos', 
+                                           'gracias por todo', 'hasta pronto', 'me despido', 'finalizar', 'terminar']
+                    
+                    if any(phrase in message_text.lower() for phrase in user_farewell_phrases):
+                        # El usuario utilizó una frase de despedida
+                        session_service.end_session_for_user(user, company)
+                        logger.info(f"Sesión finalizada por despedida del usuario: {from_phone}")
             
             # Always return a 200 OK response to WhatsApp
             return HttpResponse('OK', status=200)
