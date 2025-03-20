@@ -8,10 +8,12 @@ from django.conf import settings
 from .services.whatsapp_service import WhatsAppService
 from .services.conversation_service import ConversationService
 from .services.company_service import CompanyService
+from .services.session_service import SessionService
 
 # Inicializa los servicios
 company_service = CompanyService()
 conversation_service = ConversationService()
+session_service = SessionService()
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +104,19 @@ def webhook(request):
                     name=contact_name
                 )
                 
-                # If company exists, record the interaction between user and company
-                if company and user:
+                if not user:
+                    logger.error(f"No se pudo obtener/crear usuario para {from_phone}")
+                    return HttpResponse('OK', status=200)
+                
+                # If company exists, record the interaction and manage session
+                if company:
                     company_service.record_user_company_interaction(user, company)
+                    
+                    # Create or get session
+                    session = session_service.get_or_create_session(user, company)
+                    
+                    if not session:
+                        logger.error(f"No se pudo obtener/crear sesión para {from_phone}")
                 
                 try:
                     # Log the message safely without encoding issues
@@ -131,6 +143,15 @@ def webhook(request):
                     
                 response = whatsapp.send_message(from_phone, ai_response)
                 logger.info(f"WhatsApp API Response: {response}")
+                
+                # Check if this is a farewell message and end session if needed
+                farewell_phrases = ['adios', 'adiós', 'chau', 'hasta luego', 'bye', 'nos vemos', 
+                                    'gracias por todo', 'hasta pronto', 'me despido']
+                
+                if any(phrase in message_text.lower() for phrase in farewell_phrases) and company and user:
+                    # Look for indications that user is ending conversation in their message
+                    session_service.end_session_for_user(user, company)
+                    logger.info(f"Sesión finalizada por despedida del usuario: {from_phone}")
             
             # Always return a 200 OK response to WhatsApp
             return HttpResponse('OK', status=200)

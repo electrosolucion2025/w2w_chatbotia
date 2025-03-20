@@ -36,7 +36,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'chatbot',
+    'django_apscheduler',
 ]
+
+# Configuración de django_apscheduler
+APSCHEDULER_DATETIME_FORMAT = 'N j, Y, f:s a'  # Formato de fecha y hora para los trabajos programados
+APSCHEDULER_RUN_NOW_TIMEOUT = 25  # Timeout para ejecutar trabajos programados
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

@@ -31,9 +31,33 @@ class UserCompanyInteractionAdmin(admin.ModelAdmin):
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'company', 'started_at', 'ended_at')
-    list_filter = ('company', 'started_at')
+    list_display = ('id', 'user_info', 'company', 'started_at', 'last_activity', 'status', 'duration')
+    list_filter = ('company', 'started_at', 'ended_at')
     search_fields = ('user__name', 'user__whatsapp_number')
+    
+    def user_info(self, obj):
+        if obj.user.name:
+            return f"{obj.user.name} ({obj.user.whatsapp_number})"
+        return obj.user.whatsapp_number
+    
+    def status(self, obj):
+        return "Activa" if obj.ended_at is None else "Finalizada"
+    
+    def duration(self, obj):
+        end = obj.ended_at or timezone.now()
+        delta = end - obj.started_at
+        minutes = delta.seconds // 60
+        
+        if minutes < 60:
+            return f"{minutes} min"
+        
+        hours = minutes // 60
+        minutes = minutes % 60
+        return f"{hours}h {minutes}m"
+    
+    user_info.short_description = "Usuario"
+    status.short_description = "Estado"
+    duration.short_description = "Duración"
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):

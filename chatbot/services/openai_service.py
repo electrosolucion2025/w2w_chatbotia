@@ -106,7 +106,8 @@ class OpenAIService:
         prompt += "2. Sé conciso pero completo en tus respuestas.\n"
         prompt += "3. Utiliza un tono amable y profesional.\n"
         prompt += "4. Si desconoces la respuesta a una pregunta específica, indícalo amablemente y ofrece poner al cliente en contacto con un asesor humano.\n"
-        
+        prompt += "5. Cuando el usuario indique que quiere terminar la conversación o se despida, despídete cordialmente y agradece por utilizar el servicio.\n"
+        prompt += "6. Cuando finalice la sesion di: Chat finalizado.\n"
         # Add the list of available sections for easy reference
         if sections:
             prompt += "\n--- CATEGORÍAS DE INFORMACIÓN DISPONIBLES ---\n"

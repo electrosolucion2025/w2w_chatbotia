@@ -45,17 +45,25 @@ class User(models.Model):
 
 class Session(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sessions')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='sessions')
     started_at = models.DateTimeField(auto_now_add=True)
+    last_activity = models.DateTimeField(auto_now=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     
+    def end_session(self):
+        """End the session"""
+        from django.utils import timezone
+        self.ended_at = timezone.now()
+        self.save()
+    
     def __str__(self):
-        return f"Session {self.id} - {self.user} with {self.company.name}"
+        status = "Activa" if self.ended_at is None else "Finalizada"
+        return f"Sesión {status} - {self.user.whatsapp_number} con {self.company.name}"
     
     class Meta:
-        verbose_name = "Session"
-        verbose_name_plural = "Sessions"
+        verbose_name = "Sesión"
+        verbose_name_plural = "Sesiones"
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
