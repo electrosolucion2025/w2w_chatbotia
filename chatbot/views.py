@@ -9,11 +9,16 @@ from .services.whatsapp_service import WhatsAppService
 from .services.conversation_service import ConversationService
 from .services.company_service import CompanyService
 from .services.session_service import SessionService
+# Importar el modelo Message
+from .models import Message
+# Importar el servicio de mensajes
+from .services.message_service import MessageService
 
 # Inicializa los servicios
 company_service = CompanyService()
 conversation_service = ConversationService()
 session_service = SessionService()
+message_service = MessageService()
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +114,7 @@ def webhook(request):
                     return HttpResponse('OK', status=200)
                 
                 # If company exists, record the interaction and manage session
+                session = None
                 if company:
                     company_service.record_user_company_interaction(user, company)
                     
@@ -117,6 +123,19 @@ def webhook(request):
                     
                     if not session:
                         logger.error(f"No se pudo obtener/crear sesión para {from_phone}")
+                    
+                    # Guardar el mensaje entrante del usuario en la base de datos
+                    try:
+                        incoming_message = Message.objects.create(
+                            company=company,
+                            session=session,
+                            user=user,
+                            message_text=message_text,
+                            is_from_user=True
+                        )
+                        logger.info(f"Mensaje entrante guardado: {incoming_message.id}")
+                    except Exception as e:
+                        logger.error(f"Error al guardar mensaje entrante: {e}")
                 
                 try:
                     # Log the message safely without encoding issues
@@ -143,6 +162,20 @@ def webhook(request):
                     
                 response = whatsapp.send_message(from_phone, ai_response)
                 logger.info(f"WhatsApp API Response: {response}")
+                
+                # Guardar la respuesta de la IA en la base de datos
+                if company and user and session:
+                    try:
+                        outgoing_message = Message.objects.create(
+                            company=company,
+                            session=session,
+                            user=user,
+                            message_text=ai_response,
+                            is_from_user=False
+                        )
+                        logger.info(f"Mensaje saliente guardado: {outgoing_message.id}")
+                    except Exception as e:
+                        logger.error(f"Error al guardar mensaje saliente: {e}")
                 
                 # Verificar cierre de sesión: MÉTODO 1 - Detectar en respuesta de la IA
                 ai_farewell_phrases = ['chat finalizado', 'conversación finalizada', 'sesión finalizada', 

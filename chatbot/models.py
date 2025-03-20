@@ -67,16 +67,28 @@ class Session(models.Model):
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, blank=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='messages')
+    session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, blank=True, related_name='messages')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='messages')
     message_text = models.TextField()
     is_from_user = models.BooleanField()
     created_at = models.DateTimeField(auto_now_add=True)
     
+    def get_direction(self):
+        return "Usuario → Bot" if self.is_from_user else "Bot → Usuario"
+    
+    def short_text(self, length=30):
+        if len(self.message_text) > length:
+            return f"{self.message_text[:length]}..."
+        return self.message_text
+    
     def __str__(self):
-        direction = "User → Bot" if self.is_from_user else "Bot → User"
-        return f"{direction}: {self.message_text[:30]}{'...' if len(self.message_text) > 30 else ''}"
+        return f"{self.get_direction()}: {self.short_text()}"
+    
+    class Meta:
+        verbose_name = "Mensaje"
+        verbose_name_plural = "Mensajes"
+        ordering = ['created_at']
 
 class UserCompanyInteraction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
