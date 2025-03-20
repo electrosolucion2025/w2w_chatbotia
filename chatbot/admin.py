@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
-from .models import Company, CompanyInfo, User, Session, Message, UserCompanyInteraction
+from .models import Company, CompanyInfo, User, Session, Message, UserCompanyInteraction, Feedback
 
 class CompanyInfoInline(admin.TabularInline):
     model = CompanyInfo
@@ -120,3 +120,23 @@ class CompanyInfoAdmin(admin.ModelAdmin):
     list_display = ('company', 'title', 'created_at', 'updated_at')
     list_filter = ('company',)
     search_fields = ('title', 'content')
+
+@admin.register(Feedback)
+class FeedbackAdmin(admin.ModelAdmin):
+    list_display = ('user', 'company', 'rating', 'has_comment', 'session_link', 'created_at')
+    list_filter = ('rating', 'company', 'created_at')
+    search_fields = ('user__name', 'user__whatsapp_number', 'comment', 'company__name')
+    readonly_fields = ('session_link',)
+    
+    def has_comment(self, obj):
+        return bool(obj.comment)
+    
+    def session_link(self, obj):
+        if obj.session:
+            url = reverse('admin:chatbot_session_change', args=[obj.session.id])
+            return format_html('<a href="{}">{}</a>', url, obj.session.id)
+        return "-"
+    
+    has_comment.boolean = True
+    has_comment.short_description = "Tiene comentario"
+    session_link.short_description = "Sesión"

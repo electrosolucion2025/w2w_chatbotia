@@ -50,6 +50,7 @@ class Session(models.Model):
     started_at = models.DateTimeField(auto_now_add=True)
     last_activity = models.DateTimeField(auto_now=True)
     ended_at = models.DateTimeField(null=True, blank=True)
+    feedback_requested = models.BooleanField(default=False)
     
     def end_session(self):
         """End the session"""
@@ -62,8 +63,8 @@ class Session(models.Model):
         return f"Sesión {status} - {self.user.whatsapp_number} con {self.company.name}"
     
     class Meta:
-        verbose_name = "Sesión"
-        verbose_name_plural = "Sesiones"
+        verbose_name = "Session"
+        verbose_name_plural = "Sessions"
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -86,8 +87,8 @@ class Message(models.Model):
         return f"{self.get_direction()}: {self.short_text()}"
     
     class Meta:
-        verbose_name = "Mensaje"
-        verbose_name_plural = "Mensajes"
+        verbose_name = "Message"
+        verbose_name_plural = "Messages"
         ordering = ['created_at']
 
 class UserCompanyInteraction(models.Model):
@@ -104,3 +105,23 @@ class UserCompanyInteraction(models.Model):
     
     def __str__(self):
         return f"{self.user.name or self.user.whatsapp_number} - {self.company.name}"
+
+class Feedback(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.OneToOneField(Session, on_delete=models.CASCADE, related_name='feedback')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='feedbacks')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='feedbacks')
+    rating = models.CharField(max_length=10, choices=[
+        ('positive', 'Positivo'),
+        ('negative', 'Negativo'),
+        ('neutral', 'Neutral')
+    ])
+    comment = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"Feedback de {self.user.name or self.user.whatsapp_number} - {self.get_rating_display()}"
+    
+    class Meta:
+        verbose_name = "Feedback"
+        verbose_name_plural = "Feedbacks"
