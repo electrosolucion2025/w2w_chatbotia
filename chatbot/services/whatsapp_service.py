@@ -10,9 +10,11 @@ class WhatsAppService:
     
     BASE_URL = "https://graph.facebook.com/v22.0"
     
-    def __init__(self):
-        self.api_token = settings.WHATSAPP_API_TOKEN
-        self.phone_number_id = settings.WHATSAPP_PHONE_NUMBER_ID
+    def __init__(self, api_token=None, phone_number_id=None):
+        # Si se proporcionan credenciales de WhatsApp en settings, se utilizan
+        # de lo contrario, se utilizan las credenciales de la empresa
+        self.api_token = api_token or settings.WHATSAPP_API_TOKEN
+        self.phone_number_id = phone_number_id or settings.WHATSAPP_PHONE_NUMBER_ID
         
     def _get_headers(self):
         """Get headers for the API request."""

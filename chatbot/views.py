@@ -7,8 +7,10 @@ from django.conf import settings
 
 from .services.whatsapp_service import WhatsAppService
 from .services.conversation_service import ConversationService
+from .services.company_service import CompanyService
 
-# Create a global conversation service instance
+# Inicializa los servicios
+company_service = CompanyService()
 conversation_service = ConversationService()
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,8 @@ def webhook(request):
     """
     WhatsApp Webhook endpoint for receiving and sending messages
     """
-    whatsapp = WhatsAppService()
+    # Usar el servicio de WhatsApp predeterminado para verificaciones
+    default_whatsapp = WhatsAppService()
     
     if request.method == "GET":
         # Handle webhook verification
@@ -29,7 +32,7 @@ def webhook(request):
         
         logger.info(f"Webhook GET request received with mode: {mode}, token: {token}")
         
-        if whatsapp.verify_webhook(mode, token, challenge):
+        if default_whatsapp.verify_webhook(mode, token, challenge):
             return HttpResponse(challenge)
         else:
             return HttpResponse("Verification failed", status=403)
@@ -42,78 +45,74 @@ def webhook(request):
             
             # Check if this is a message or status update
             entry = body.get("entry", [])
-            if entry and entry[0].get("changes", []):
-                value = entry[0]["changes"][0].get("value", {})
+            if not entry or not entry[0].get("changes", []):
+                return HttpResponse('OK', status=200)
                 
-                # Handle status updates
-                if "statuses" in value:
-                    logger.info("Processing status update")
-                    return HttpResponse('OK', status=200)
+            value = entry[0]["changes"][0].get("value", {})
+            
+            # Handle status updates
+            if "statuses" in value:
+                logger.info("Processing status update")
+                return HttpResponse('OK', status=200)
+            
+            # Get the phone number ID from the metadata
+            metadata = value.get("metadata", {})
+            phone_number_id = metadata.get("phone_number_id")
+            
+            if not phone_number_id:
+                logger.warning("No phone_number_id found in webhook")
+                return HttpResponse('OK', status=200)
                 
-                # Get the phone number ID from the metadata
-                metadata = value.get("metadata", {})
-                phone_number_id = metadata.get("phone_number_id")
+            # Find the company associated with this phone number ID
+            company = company_service.get_company_by_phone_number_id(phone_number_id)
+            
+            # Si no se encuentra la compañía, usar la configuración por defecto
+            whatsapp = default_whatsapp
+            company_info = None
+            
+            if company:
+                logger.info(f"Found company: {company.name} for phone ID: {phone_number_id}")
                 
-                if not phone_number_id:
-                    logger.warning("No phone_number_id found in webhook")
-                    return HttpResponse('OK', status=200)
+                # Create WhatsApp service with company credentials if available
+                if company.whatsapp_api_token and company.whatsapp_phone_number_id:
+                    whatsapp = WhatsAppService(
+                        api_token=company.whatsapp_api_token,
+                        phone_number_id=company.whatsapp_phone_number_id
+                    )
+                
+                # Get company info for OpenAI
+                company_info = company_service.get_company_info(company)
+            else:
+                logger.warning(f"Using default config - no company for phone ID: {phone_number_id}")
             
             # Parse regular messages
-            phone_number, message_text, message_id = whatsapp.parse_webhook_message(body)
+            from_phone, message_text, message_id = whatsapp.parse_webhook_message(body)
             
-            if phone_number and message_text:
-                # Format company_info to match what the OpenAI service expects
-                company_info = {
-                    "name": "AutoMasters Concesionario",
-                    "sections": [
-                        {
-                            "title": "Sobre Nosotros", 
-                            "content": "AutoMasters es un concesionario de vehículos nuevos y usados con más de 20 años de experiencia en el mercado español. Somos distribuidores oficiales de las marcas Mercedes-Benz, BMW, Audi y Volkswagen."
-                        },
-                        {
-                            "title": "Vehículos Nuevos", 
-                            "content": "Ofrecemos toda la gama de modelos 2025 de nuestras marcas principales. Destacan el Mercedes EQS, BMW i4, Audi e-tron y Volkswagen ID.4. Todos con financiación flexible y garantía oficial del fabricante."
-                        },
-                        {
-                            "title": "Vehículos de Ocasión", 
-                            "content": "Disponemos de más de 150 vehículos de ocasión certificados con menos de 5 años y garantía mínima de 1 año. Todos revisados en 100 puntos de control y con historial de mantenimiento verificado."
-                        },
-                        {
-                            "title": "Servicios de Financiación", 
-                            "content": "Ofrecemos opciones de financiación a medida: leasing, renting, préstamo clásico y pago flexible. Tipos de interés desde 3,9% TAE y entrada desde 10%. Aprovecha nuestras ofertas especiales de financiación sin intereses en modelos seleccionados."
-                        },
-                        {
-                            "title": "Taller y Mantenimiento", 
-                            "content": "Nuestro taller oficial ofrece mantenimiento y reparación con técnicos certificados y piezas originales. Servicio rápido para operaciones básicas sin cita previa. Disponemos de vehículos de cortesía para reparaciones de larga duración."
-                        },
-                        {
-                            "title": "Horarios y Contacto", 
-                            "content": "Exposición: Lunes a viernes de 9:00 a 20:00, Sábados de 10:00 a 14:00. Taller: Lunes a viernes de 8:00 a 19:00. Teléfono principal: 912 345 678. Ubicación: Avenida de los Automóviles 123, Madrid."
-                        }
-                    ]
-                }
+            if from_phone and message_text:
+                # Extract contact name if available
+                contact_name = None
+                contacts = value.get("contacts", [])
+                if contacts and len(contacts) > 0:
+                    profile = contacts[0].get("profile", {})
+                    contact_name = profile.get("name")
                 
-                logger.info(f"Received message from {phone_number}: {message_text}")
+                logger.info(f"Received message from {from_phone} ({contact_name}): {message_text}")
                 
                 # Generate a response using OpenAI
                 ai_response = conversation_service.generate_response(
-                    user_id=phone_number,
+                    user_id=from_phone,
                     message=message_text,
                     company_info=company_info
                 )
                 
-                # Set up WhatsApp service with the correct phone number ID
-                service = WhatsAppService()
-                service.phone_number_id = phone_number_id
-                
                 # Send the AI response back to the user
-                logger.info(f"Sending AI response to {phone_number}: {ai_response}")
-                response = service.send_message(phone_number, ai_response)
+                logger.info(f"Sending AI response to {from_phone}: {ai_response}")
+                response = whatsapp.send_message(from_phone, ai_response)
                 logger.info(f"WhatsApp API Response: {response}")
             
             # Always return a 200 OK response to WhatsApp
             return HttpResponse('OK', status=200)
         
         except Exception as e:
-            logger.error(f"Error processing webhook: {str(e)}")
+            logger.error(f"Error processing webhook: {e}")
             return HttpResponse('OK', status=200)

@@ -7,9 +7,19 @@ class CompanyInfoInline(admin.TabularInline):
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    list_display = ('name', 'phone_number', 'created_at')
+    list_display = ('name', 'phone_number', 'active', 'created_at')
     search_fields = ('name', 'phone_number')
+    list_filter = ('active', 'created_at')
     inlines = [CompanyInfoInline]
+    
+    fieldsets = (
+        ('Información Básica', {
+            'fields': ('name', 'phone_number', 'active')
+        }),
+        ('Configuración de WhatsApp', {
+            'fields': ('whatsapp_api_token', 'whatsapp_phone_number_id'),
+        }),
+    )
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
@@ -34,6 +44,6 @@ class MessageAdmin(admin.ModelAdmin):
 
 @admin.register(CompanyInfo)
 class CompanyInfoAdmin(admin.ModelAdmin):
-    list_display = ('title', 'company', 'updated_at')
+    list_display = ('company', 'title', 'created_at', 'updated_at')
     list_filter = ('company',)
     search_fields = ('title', 'content')
