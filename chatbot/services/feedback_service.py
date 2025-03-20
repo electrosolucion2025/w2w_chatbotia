@@ -45,16 +45,6 @@ class FeedbackService:
     def process_feedback_response(self, session, user, company, feedback_type, comment=None):
         """
         Procesa la respuesta de feedback del usuario
-        
-        Args:
-            session: Sesión asociada al feedback
-            user: Usuario que envía el feedback
-            company: Empresa a la que se refiere el feedback
-            feedback_type: Tipo de feedback (positive, negative, neutral)
-            comment: Comentario opcional
-            
-        Returns:
-            Feedback: Objeto de feedback creado
         """
         try:
             # Crear o actualizar feedback
@@ -67,6 +57,11 @@ class FeedbackService:
                     'comment': comment
                 }
             )
+            
+            # Invalidar caché de estadísticas
+            from django.core.cache import cache
+            cache_key = f"feedback_stats_{company.id}_30"
+            cache.delete(cache_key)
             
             if created:
                 logger.info(f"Nuevo feedback creado para sesión {session.id}: {feedback_type}")
@@ -133,3 +128,33 @@ class FeedbackService:
         except Exception as e:
             logger.error(f"Error al obtener estadísticas de feedback: {e}")
             return {"error": str(e)}
+    
+    def get_cached_feedback_stats(self, company, days=30, cache_time=3600):
+        """
+        Obtiene estadísticas de feedback para una empresa con caché
+        
+        Args:
+            company: Empresa para la que se obtienen estadísticas
+            days: Número de días hacia atrás para calcular estadísticas
+            cache_time: Tiempo en segundos para mantener las estadísticas en caché
+            
+        Returns:
+            dict: Estadísticas de feedback
+        """
+        from django.core.cache import cache
+        
+        # Crear una clave única para esta consulta
+        cache_key = f"feedback_stats_{company.id}_{days}"
+        
+        # Intentar obtener del caché primero
+        cached_stats = cache.get(cache_key)
+        if cached_stats is not None:
+            return cached_stats
+        
+        # Si no está en caché, calcular estadísticas
+        stats = self.get_feedback_stats(company, days)
+        
+        # Guardar en caché para consultas futuras
+        cache.set(cache_key, stats, cache_time)
+        
+        return stats

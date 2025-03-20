@@ -41,6 +41,9 @@ def webhook(request):
         
     elif request.method == "POST":
         try:
+            # Crear una variable para rastrear si estamos en el flujo de feedback
+            is_feedback_flow = False
+
             # Obtener el cuerpo del webhook
             body = json.loads(request.body)
             
@@ -105,6 +108,7 @@ def webhook(request):
                 
                 # Procesar botones de feedback
                 if button_id in ["positive", "negative", "comment"]:
+                    is_feedback_flow = True
                     # Buscar la última sesión finalizada para feedback
                     from django.utils import timezone
                     from datetime import timedelta
@@ -150,17 +154,22 @@ def webhook(request):
             waiting_session_id = cache.get(cache_key)
             
             if waiting_session_id and message_text and not message_text.startswith("BUTTON:"):
+                is_feedback_flow = True
                 try:
                     feedback_session = Session.objects.get(id=waiting_session_id)
                     
                     # Guardar el comentario
                     feedback_service.process_feedback_response(feedback_session, user, company, 'neutral', comment=message_text)
                     
-                    # Agradecer al usuario
+                    # Agradecer al usuario sin reiniciar la conversación completa
                     whatsapp.send_message(from_phone, "¡Gracias por compartir tu experiencia! Tu comentario nos ayuda a mejorar nuestro servicio.")
                     
                     # Eliminar la marca de espera
                     cache.delete(cache_key)
+                    
+                    # NO UTILIZAR EL CONVERSATION SERVICE AQUÍ
+                    # De esta forma no se crea una nueva entrada en self.conversations
+                    # y no se considera como primer mensaje de una nueva conversación
                     
                     return HttpResponse('OK', status=200)
                     
@@ -168,80 +177,81 @@ def webhook(request):
                     logger.error(f"Error procesando comentario de feedback: {e}")
             
             # PROCESAMIENTO DE MENSAJES REGULARES
-            # Guardar el mensaje entrante
-            try:
-                incoming_message = Message.objects.create(
-                    company=company,
-                    session=session,
-                    user=user,
-                    message_text=message_text,
-                    is_from_user=True
-                )
-                logger.info(f"Mensaje entrante guardado: {incoming_message.id}")
-            except Exception as e:
-                logger.error(f"Error al guardar mensaje entrante: {e}")
-            
-            # Obtener información de la empresa para OpenAI
-            company_info = company_service.get_company_info(company)
-            
-            # Registrar el mensaje recibido
-            try:
-                logger.info(f"Received message from {from_phone} ({contact_name}): {message_text}")
-            except UnicodeEncodeError:
-                safe_name = contact_name.encode('ascii', 'replace').decode('ascii') if contact_name else None
-                safe_message = message_text.encode('ascii', 'replace').decode('ascii') if message_text else None
-                logger.info(f"Received message from {from_phone} ({safe_name}): {safe_message}")
-            
-            # Generar respuesta con OpenAI
-            ai_response = conversation_service.generate_response(
-                user_id=from_phone,
-                message=message_text,
-                company_info=company_info
-            )
-            
-            # Enviar respuesta al usuario
-            try:
-                logger.info(f"Sending AI response to {from_phone}: {ai_response}")
-            except UnicodeEncodeError:
-                safe_response = ai_response.encode('ascii', 'replace').decode('ascii')
-                logger.info(f"Sending AI response to {from_phone}: {safe_response}")
+            if not is_feedback_flow:
+                # Guardar el mensaje entrante
+                try:
+                    incoming_message = Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=message_text,
+                        is_from_user=True
+                    )
+                    logger.info(f"Mensaje entrante guardado: {incoming_message.id}")
+                except Exception as e:
+                    logger.error(f"Error al guardar mensaje entrante: {e}")
                 
-            response = whatsapp.send_message(from_phone, ai_response)
-            logger.info(f"WhatsApp API Response: {response}")
-            
-            # Guardar la respuesta de la IA
-            try:
-                outgoing_message = Message.objects.create(
-                    company=company,
-                    session=session,
-                    user=user,
-                    message_text=ai_response,
-                    is_from_user=False
+                # Obtener información de la empresa para OpenAI
+                company_info = company_service.get_company_info(company)
+                
+                # Registrar el mensaje recibido
+                try:
+                    logger.info(f"Received message from {from_phone} ({contact_name}): {message_text}")
+                except UnicodeEncodeError:
+                    safe_name = contact_name.encode('ascii', 'replace').decode('ascii') if contact_name else None
+                    safe_message = message_text.encode('ascii', 'replace').decode('ascii') if message_text else None
+                    logger.info(f"Received message from {from_phone} ({safe_name}): {safe_message}")
+                
+                # Generar respuesta con OpenAI
+                ai_response = conversation_service.generate_response(
+                    user_id=from_phone,
+                    message=message_text,
+                    company_info=company_info
                 )
-                logger.info(f"Mensaje saliente guardado: {outgoing_message.id}")
-            except Exception as e:
-                logger.error(f"Error al guardar mensaje saliente: {e}")
-            
-            # Verificar cierre de sesión por respuesta de IA
-            ai_farewell_phrases = ['chat finalizado', 'conversación finalizada', 'sesión finalizada', 
-                                 'ha sido un placer atenderte', 'gracias por contactarnos']
+                
+                # Enviar respuesta al usuario
+                try:
+                    logger.info(f"Sending AI response to {from_phone}: {ai_response}")
+                except UnicodeEncodeError:
+                    safe_response = ai_response.encode('ascii', 'replace').decode('ascii')
+                    logger.info(f"Sending AI response to {from_phone}: {safe_response}")
+                    
+                response = whatsapp.send_message(from_phone, ai_response)
+                logger.info(f"WhatsApp API Response: {response}")
+                
+                # Guardar la respuesta de la IA
+                try:
+                    outgoing_message = Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=ai_response,
+                        is_from_user=False
+                    )
+                    logger.info(f"Mensaje saliente guardado: {outgoing_message.id}")
+                except Exception as e:
+                    logger.error(f"Error al guardar mensaje saliente: {e}")
+                
+                # Verificar cierre de sesión por respuesta de IA
+                ai_farewell_phrases = ['chat finalizado', 'conversación finalizada', 'sesión finalizada', 
+                                    'ha sido un placer atenderte', 'gracias por contactarnos']
 
-            if any(phrase in ai_response.lower() for phrase in ai_farewell_phrases):
-                # La IA indicó que la conversación ha terminado
-                session_service.end_session_for_user(user, company)
-                logger.info(f"Sesión finalizada por respuesta de cierre de la IA: {from_phone}")
-                
-                # Enviar solicitud de feedback con delay
-                from threading import Timer
-                Timer(3.0, send_delayed_feedback_request, args=[from_phone, session.id]).start()
-                
-            # Verificar cierre de sesión por mensaje del usuario
-            elif any(phrase in message_text.lower() for phrase in ['adios', 'adiós', 'chau', 'hasta luego', 
-                                                                'bye', 'nos vemos', 'gracias por todo', 
-                                                                'hasta pronto', 'me despido', 'finalizar', 
-                                                                'terminar']):
-                session_service.end_session_for_user(user, company)
-                logger.info(f"Sesión finalizada por despedida del usuario: {from_phone}")
+                if any(phrase in ai_response.lower() for phrase in ai_farewell_phrases):
+                    # La IA indicó que la conversación ha terminado
+                    session_service.end_session_for_user(user, company)
+                    logger.info(f"Sesión finalizada por respuesta de cierre de la IA: {from_phone}")
+                    
+                    # Enviar solicitud de feedback con delay
+                    from threading import Timer
+                    Timer(3.0, send_delayed_feedback_request, args=[from_phone, session.id]).start()
+                    
+                # Verificar cierre de sesión por mensaje del usuario
+                elif any(phrase in message_text.lower() for phrase in ['adios', 'adiós', 'chau', 'hasta luego', 
+                                                                    'bye', 'nos vemos', 'gracias por todo', 
+                                                                    'hasta pronto', 'me despido', 'finalizar', 
+                                                                    'terminar']):
+                    session_service.end_session_for_user(user, company)
+                    logger.info(f"Sesión finalizada por despedida del usuario: {from_phone}")
             
             return HttpResponse('OK', status=200)
             
