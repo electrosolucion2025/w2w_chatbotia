@@ -26,11 +26,11 @@ class WhatsAppService:
         Send a text message to a WhatsApp number
         
         Args:
-            to_phone (str): Recipient's phone number in international format without +
+            to_phone (str): Recipient's phone number
             message_text (str): The message to send
-            
+        
         Returns:
-            dict: The API response
+            dict: The API response or None if error
         """
         endpoint = f"{self.BASE_URL}/{self.phone_number_id}/messages"
         
@@ -51,14 +51,25 @@ class WhatsAppService:
                 data=json.dumps(payload)
             )
             
-            response.raise_for_status()  # Raise an error for bad responses
+            # Verificar si la respuesta fue exitosa
+            if response.status_code == 200:
+                return response.json()
             
-            return response.json()
-        
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error sending message to {to_phone}: {e}")
-            if hasattr(e, 'response'):
-                logger.error(f"Error response: {e.response.text}")
+            # Manejar errores comunes
+            error_data = response.json()
+            logger.error(f"Error sending message to {to_phone}: {response.status_code} {response.reason}")
+            logger.error(f"Error response: {error_data}")
+            
+            # Verificar si es un error de token expirado
+            if response.status_code == 401:
+                error_obj = error_data.get("error", {})
+                if error_obj.get("code") == 190 and error_obj.get("error_subcode") == 463:
+                    logger.critical("WhatsApp TOKEN EXPIRED! Please generate a new token in Meta Developer Portal")
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Exception sending message: {str(e)}")
             return None
         
     def verify_webhook(self, mode, token, challenge):
