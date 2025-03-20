@@ -14,7 +14,18 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# Get the base allowed hosts from environment variable
+base_hosts = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+# For development, allow all domains
+# This is not recommended for production use
+# and should be replaced with specific domains in production.
+if DEBUG:
+    # This allow any host in developtment mode
+    ALLOWED_HOSTS = ['*']
+else:
+    # In production, restrict to specific hosts
+    ALLOWED_HOSTS = base_hosts
 
 # Application definition
 INSTALLED_APPS = [
@@ -123,3 +134,42 @@ OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
 WHATSAPP_API_TOKEN = os.getenv('WHATSAPP_API_TOKEN')
 WHATSAPP_PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID')
 WHATSAPP_VERIFY_TOKEN = os.getenv('WHATSAPP_VERIFY_TOKEN')
+
+# Logging configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': 'debug.log',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'chatbot': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+}
+
+# APPEND_SLASH = False  # Disable appending a slash to URLs
