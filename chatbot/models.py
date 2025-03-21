@@ -150,6 +150,19 @@ class Message(models.Model):
     is_from_user = models.BooleanField()
     created_at = models.DateTimeField(auto_now_add=True)
     
+    # Añadir el campo message_type según la migración 0012
+    message_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('text', 'Texto'),
+            ('audio', 'Audio'),
+            ('image', 'Imagen'),
+            ('location', 'Ubicación'),
+            ('interactive', 'Interactivo')
+        ],
+        default='text'
+    )
+    
     def get_direction(self):
         return "Usuario → Bot" if self.is_from_user else "Bot → Usuario"
     
@@ -165,6 +178,44 @@ class Message(models.Model):
         verbose_name = "Message"
         verbose_name_plural = "Messages"
         ordering = ['created_at']
+        
+# Añadir la función audio_file_path según la migración 0011
+def audio_file_path(instance, filename):
+    """Genera la ruta para guardar el archivo de audio"""
+    # Guardar en estructura: media/audios/[company_id]/[date]/[filename]
+    company_id = instance.message.company.id if instance.message and instance.message.company else 'unknown'
+    date_path = instance.created_at.strftime('%Y/%m/%d')
+    return f'audios/{company_id}/{date_path}/{filename}'
+
+class AudioMessage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.ForeignKey('Message', on_delete=models.CASCADE, related_name='audio_messages')
+    audio_file = models.FileField(upload_to=audio_file_path, null=True, blank=True)
+    audio_duration = models.FloatField(null=True, blank=True)
+    transcription = models.TextField(blank=True, null=True)
+    transcription_model = models.CharField(max_length=100, blank=True, null=True)
+    confidence_score = models.FloatField(null=True, blank=True)
+    processing_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pendiente'),
+            ('processing', 'Procesando'),
+            ('completed', 'Completado'),
+            ('failed', 'Fallido'),
+        ],
+        default='pending'
+    )
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Audio {self.id} - {self.created_at.strftime('%d/%m/%Y %H:%M')}"
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Audio Message"
+        verbose_name_plural = "Audio Messages"
 
 class UserCompanyInteraction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
