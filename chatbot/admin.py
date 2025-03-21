@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 from django.http import HttpResponseRedirect
-from .models import Company, CompanyInfo, User, Session, Message, UserCompanyInteraction, Feedback
+from .models import *
 from .services.feedback_service import FeedbackService
 
 # Inicializar servicio de feedback
@@ -209,9 +209,24 @@ class UserCompanyInteractionInline(admin.TabularInline):
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
-    list_display = ('name', 'whatsapp_number', 'created_at')
-    search_fields = ('name', 'whatsapp_number')
-    inlines = [UserCompanyInteractionInline]
+    list_display = ('whatsapp_number', 'name', 'created_at', 'policies_status')
+    search_fields = ('whatsapp_number', 'name', 'email')
+    list_filter = ('policies_accepted', 'created_at')
+    
+    def policies_status(self, obj):
+        if obj.policies_accepted:
+            return format_html(
+                '<span style="color: green;">✅ Aceptadas</span><br>'
+                '<small>Versión: {} - {}</small>',
+                obj.policies_version,
+                obj.policies_accepted_date.strftime('%d/%m/%Y %H:%M')
+            )
+        elif obj.waiting_policy_acceptance:
+            return format_html('<span style="color: orange;">⏳ Pendiente de respuesta</span>')
+        else:
+            return format_html('<span style="color: red;">❌ No aceptadas</span>')
+    
+    policies_status.short_description = "Políticas"
 
 @admin.register(UserCompanyInteraction)
 class UserCompanyInteractionAdmin(admin.ModelAdmin):
@@ -328,3 +343,80 @@ class FeedbackAdmin(admin.ModelAdmin):
     has_comment.boolean = True
     has_comment.short_description = "Tiene comentario"
     session_link.short_description = "Sesión"
+
+# Actualizar el PolicyVersionAdmin para manejar cambios de versión
+
+@admin.register(PolicyVersion)
+class PolicyVersionAdmin(admin.ModelAdmin):
+    list_display = ('version', 'title', 'active', 'created_at', 'acceptance_count')
+    list_filter = ('active', 'created_at')
+    search_fields = ('title', 'description', 'version')
+    readonly_fields = ('acceptance_count', 'created_at')
+    
+    fieldsets = (
+        ("Información Básica", {
+            "fields": ("version", "title", "active")
+        }),
+        ("Contenido", {
+            "fields": ("description", "privacy_policy_text", "terms_text")
+        }),
+        ("Estadísticas", {
+            "fields": ("acceptance_count", "created_at")
+        })
+    )
+    
+    def acceptance_count(self, obj):
+        """Muestra el número de usuarios que han aceptado esta versión"""
+        try:
+            # Intentar contar aceptaciones si existe el modelo PolicyAcceptance
+            count = PolicyAcceptance.objects.filter(policy_version=obj).count()
+            return f"{count} usuario(s)"
+        except (ImportError, AttributeError):
+            # Fallback si no existe el modelo
+            users = User.objects.filter(policies_version=obj.version, policies_accepted=True).count()
+            return f"{users} usuario(s) [estimado]"
+            
+    acceptance_count.short_description = "Aceptaciones"
+    
+    # Al activar una política, desactivar las demás
+    def save_model(self, request, obj, form, change):
+        # Si se está activando esta política
+        if obj.active:
+            # Verificar si es una versión nueva (mayor)
+            try:
+                if change:  # Solo para ediciones, no creaciones nuevas
+                    old_obj = self.model.objects.get(pk=obj.pk)
+                    
+                    # Si estamos cambiando de inactivo a activo
+                    if not old_obj.active and obj.active:
+                        # Informar al administrador sobre el impacto del cambio
+                        old_active = self.model.objects.filter(active=True).first()
+                        if old_active:
+                            old_version = old_active.version.split('.')
+                            new_version = obj.version.split('.')
+                            
+                            if len(old_version) > 0 and len(new_version) > 0:
+                                if int(new_version[0]) > int(old_version[0]):
+                                    # Es un cambio mayor, mostrar advertencia
+                                    self.message_user(
+                                        request, 
+                                        f"¡ATENCIÓN! Has activado una versión mayor ({obj.version}). " +
+                                        "Los usuarios tendrán que aceptar nuevamente las políticas.", 
+                                        level='WARNING'
+                                    )
+            except Exception as e:
+                # Error al comparar versiones, ignorar
+                pass
+                
+            # Desactivar otras versiones
+            self.model.objects.exclude(id=obj.pk).update(active=False)
+            
+        super().save_model(request, obj, form, change)
+
+# Si implementaste PolicyAcceptance, añade esto también:
+@admin.register(PolicyAcceptance)
+class PolicyAcceptanceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'policy_version', 'accepted_at', 'ip_address')
+    list_filter = ('accepted_at', 'policy_version')
+    search_fields = ('user__name', 'user__whatsapp_number', 'policy_version__version')
+    readonly_fields = ('user', 'policy_version', 'accepted_at', 'ip_address', 'user_agent')

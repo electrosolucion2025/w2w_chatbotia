@@ -74,7 +74,7 @@ class WhatsAppService:
             logger.error(f"Exception sending message: {str(e)}")
             return None
         
-    def send_interactive_message(self, phone_number, body_text, buttons, header_text=None):
+    def send_interactive_message(self, phone_number, body_text, buttons, header_text=None, footer_text=None):
         """
         Envía un mensaje interactivo con botones
         
@@ -83,12 +83,11 @@ class WhatsAppService:
             body_text (str): Texto principal del mensaje
             buttons (list): Lista de diccionarios con id y title para cada botón
             header_text (str, optional): Texto del encabezado
+            footer_text (str, optional): Texto del pie de página
             
         Returns:
             dict: Respuesta de la API de WhatsApp
         """
-        logger = logging.getLogger(__name__)
-        
         # Validar inputs
         if not phone_number or not body_text or not buttons:
             return {"error": "Missing required parameters"}
@@ -131,16 +130,23 @@ class WhatsAppService:
                 "text": header_text
             }
         
+        # Añadir footer si está presente
+        if footer_text:
+            payload["interactive"]["footer"] = {
+                "text": footer_text
+            }
+        
         try:
             # Usar el mismo endpoint y encabezados que se utilizan para enviar mensajes normales
-            api_url = f"https://graph.facebook.com/v22.0/{self.phone_number_id}/messages"
+            endpoint = f"{self.BASE_URL}/{self.phone_number_id}/messages"
+            
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_token}"
             }
             
             response = requests.post(
-                api_url,
+                endpoint,
                 headers=headers,
                 data=json.dumps(payload)
             )
@@ -270,3 +276,206 @@ class WhatsAppService:
             import traceback
             logger.error(traceback.format_exc())
             return None, None, None, None
+
+    def send_policy_acceptance_message(self, phone_number, policy):
+        """
+        Envía un mensaje interactivo con los términos y condiciones para aceptación
+        
+        Args:
+            phone_number (str): Número de teléfono del destinatario
+            policy: Objeto PolicyVersion o diccionario con los campos necesarios
+        
+        Returns:
+            dict: Respuesta de la API de WhatsApp
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Extraer campos de la política (sea un objeto o diccionario)
+        if hasattr(policy, 'title'):
+            # Es un objeto PolicyVersion
+            title = policy.title
+            description = policy.description
+            version = policy.version
+            logger.info(f"Processing policy object: title={title}, version={version}")
+        else:
+            # Es un diccionario
+            title = policy.get('title', 'Políticas de Privacidad')
+            description = policy.get('description', 'Para utilizar nuestro servicio, necesitas aceptar nuestras políticas.')
+            version = policy.get('version', '1.0')
+        
+        # Crear el mensaje con formato adecuado
+        header_text = title
+        
+        # Formatear el cuerpo del mensaje - mantenemos el mensaje principal conciso
+        body_text = f"{description}\n\n¿Aceptas nuestras políticas de privacidad y términos de servicio (v{version})?"
+        
+        # Botones de aceptación/rechazo y ver detalles
+        buttons = [
+            {"id": "accept_policies", "title": "✅ Acepto"},
+            {"id": "reject_policies", "title": "❌ No acepto"},
+            {"id": "view_full_policies", "title": "📋 Ver detalles"}
+        ]
+        
+        # Footer con información adicional
+        footer_text = f"Versión {version} • Powered by Whats2Want Global S.L."
+        
+        # Enviar el mensaje interactivo
+        return self.send_interactive_message(
+            phone_number=phone_number,
+            header_text=header_text,
+            body_text=body_text,
+            buttons=buttons,
+            footer_text=footer_text
+        )
+        
+    def send_full_policy_details(self, phone_number, policy):
+        """
+        Envía una serie de mensajes con los detalles completos de la política
+        
+        Args:
+            phone_number (str): Número de teléfono del destinatario
+            policy: Objeto PolicyVersion o diccionario con los campos necesarios
+        
+        Returns:
+            List: Lista de respuestas de la API de WhatsApp
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        responses = []
+        
+        # Extraer campos de la política
+        if hasattr(policy, 'privacy_policy_text'):
+            # Es un objeto PolicyVersion
+            title = policy.title
+            privacy_text = policy.privacy_policy_text
+            terms_text = policy.terms_text
+            version = policy.version
+            logger.info(f"Sending full policy details for {title} v{version}")
+        else:
+            # Es un diccionario
+            title = policy.get('title', 'Políticas de Privacidad')
+            privacy_text = policy.get('privacy_policy_text', '')
+            terms_text = policy.get('terms_text', '')
+            version = policy.get('version', '1.0')
+        
+        # Enviar un mensaje introductorio
+        intro_response = self.send_message(
+            phone_number,
+            f"*{title} - v{version}*\n\nA continuación te enviamos los detalles completos de nuestras políticas y términos."
+        )
+        responses.append(intro_response)
+        
+        # Enviar políticas de privacidad (dividir si es necesario por límites de longitud)
+        if privacy_text:
+            # WhatsApp tiene un límite de ~4000 caracteres por mensaje
+            max_length = 3500  # Dejamos margen para encabezados
+            
+            if len(privacy_text) <= max_length:
+                # Enviar todo en un solo mensaje
+                privacy_response = self.send_message(
+                    phone_number,
+                    f"*POLÍTICA DE PRIVACIDAD*\n\n{privacy_text}"
+                )
+                responses.append(privacy_response)
+            else:
+                # Dividir en múltiples mensajes
+                parts = self._split_long_text(privacy_text, max_length)
+                for i, part in enumerate(parts):
+                    prefix = f"*POLÍTICA DE PRIVACIDAD (Parte {i+1}/{len(parts)})*\n\n"
+                    privacy_response = self.send_message(
+                        phone_number,
+                        f"{prefix}{part}"
+                    )
+                    responses.append(privacy_response)
+        
+        # Enviar términos de servicio (también dividir si es necesario)
+        if terms_text:
+            max_length = 3500
+            
+            if len(terms_text) <= max_length:
+                terms_response = self.send_message(
+                    phone_number,
+                    f"*TÉRMINOS DE SERVICIO*\n\n{terms_text}"
+                )
+                responses.append(terms_response)
+            else:
+                parts = self._split_long_text(terms_text, max_length)
+                for i, part in enumerate(parts):
+                    prefix = f"*TÉRMINOS DE SERVICIO (Parte {i+1}/{len(parts)})*\n\n"
+                    terms_response = self.send_message(
+                        phone_number,
+                        f"{prefix}{part}"
+                    )
+                    responses.append(terms_response)
+        
+        # Enviar mensaje final para solicitar aceptación nuevamente
+        final_response = self.send_interactive_message(
+            phone_number=phone_number,
+            header_text="Confirmar Aceptación",
+            body_text=f"Ahora que has revisado todos los detalles, ¿aceptas nuestras políticas de privacidad y términos de servicio (v{version})?",
+            buttons=[
+                {"id": "accept_policies", "title": "✅ Acepto"},
+                {"id": "reject_policies", "title": "❌ No acepto"}
+            ],
+            footer_text=f"Versión {version} • Powered by Whats2Want Global S.L."
+        )
+        responses.append(final_response)
+        
+        return responses
+        
+    def _split_long_text(self, text, max_length):
+        """
+        Divide un texto largo en partes más pequeñas respetando párrafos
+        
+        Args:
+            text (str): Texto a dividir
+            max_length (int): Longitud máxima por parte
+            
+        Returns:
+            List[str]: Lista de partes del texto
+        """
+        if len(text) <= max_length:
+            return [text]
+            
+        parts = []
+        current_part = ""
+        
+        # Dividir por párrafos primero
+        paragraphs = text.split('\n\n')
+        
+        for paragraph in paragraphs:
+            # Si añadir este párrafo excede el límite, comenzar nueva parte
+            if len(current_part) + len(paragraph) + 2 > max_length:
+                if current_part:  # Solo guardar si hay contenido
+                    parts.append(current_part.strip())
+                current_part = paragraph + "\n\n"
+            else:
+                current_part += paragraph + "\n\n"
+        
+        # Añadir la última parte si tiene contenido
+        if current_part:
+            parts.append(current_part.strip())
+        
+        # Si alguna parte todavía es demasiado larga, dividirla más
+        final_parts = []
+        for part in parts:
+            if len(part) <= max_length:
+                final_parts.append(part)
+            else:
+                # División simple por longitud si los párrafos son muy largos
+                i = 0
+                while i < len(part):
+                    # Tratar de encontrar un punto o espacio cercano al límite
+                    end_pos = min(i + max_length, len(part))
+                    if end_pos < len(part):
+                        # Buscar hacia atrás para encontrar un buen punto de corte
+                        for j in range(min(end_pos, i + max_length), i, -1):
+                            if part[j] in '.!? ' and j - i > max_length / 2:
+                                end_pos = j + 1
+                                break
+                    
+                    final_parts.append(part[i:end_pos])
+                    i = end_pos
+        
+        return final_parts

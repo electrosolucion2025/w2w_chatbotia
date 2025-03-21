@@ -8,9 +8,10 @@ from .services.whatsapp_service import WhatsAppService
 from .services.conversation_service import ConversationService
 from .services.company_service import CompanyService
 from .services.session_service import SessionService
-from .models import Message, Session
+from .models import Message, Session, PolicyVersion
 from .services.message_service import MessageService
 from .services.feedback_service import FeedbackService
+from .services.policy_service import PolicyService
 
 # Inicializa los servicios
 company_service = CompanyService()
@@ -18,6 +19,7 @@ conversation_service = ConversationService()
 session_service = SessionService()
 message_service = MessageService()
 feedback_service = FeedbackService()
+policy_service = PolicyService()
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,112 @@ def webhook(request):
                 logger.error(f"No se pudo obtener/crear usuario para {from_phone}")
                 return HttpResponse('OK', status=200)
             
+            # Verificar si el usuario ya aceptó las políticas
+            # Primero, obtén la política activa
+            policy = PolicyVersion.objects.filter(active=True).first()
+
+            # Verificar si necesita aceptar o actualizar políticas
+            needs_acceptance = not user.policies_accepted
+            needs_update = False
+
+            if user.policies_accepted and policy:
+                # Ya tiene políticas aceptadas, pero verificar si hay una nueva versión
+                try:
+                    if user.policies_version != policy.version:
+                        # Comparar versiones semánticas
+                        user_version = [int(x) for x in user.policies_version.split(".")]
+                        policy_version = [int(x) for x in policy.version.split(".")]
+                        
+                        # Si el número principal de versión ha cambiado (1.x → 2.x)
+                        if policy_version[0] > user_version[0]:
+                            needs_update = True
+                            logger.info(f"Usuario {user.whatsapp_number} necesita actualizar política: {user.policies_version} → {policy.version}")
+                except (ValueError, IndexError, AttributeError) as e:
+                    logger.warning(f"Error comparando versiones: {e}")
+                    # En caso de error, ser conservadores y pedir actualización
+                    needs_update = True
+
+            # Procesar si necesita aceptar inicialmente o actualizar
+            if needs_acceptance or needs_update:
+                if user.waiting_policy_acceptance and metadata.get("type") == "interactive" and "button_id" in metadata:
+                    button_id = metadata.get("button_id")
+                    
+                    # Obtener la política activa
+                    active_policy = policy_service.get_active_policy()
+                    
+                    if button_id == "accept_policies":
+                        # El usuario aceptó las políticas
+                        policy_service.record_policy_acceptance(
+                            user, 
+                            active_policy or "1.0",  # Usar versión activa o "1.0" como fallback
+                            ip_address=request.META.get('REMOTE_ADDR', None)
+                        )
+                        
+                        # Si hay un mensaje pendiente, procesarlo ahora
+                        pending_message = user.pending_message_text
+                        if pending_message:
+                            # Resetear el mensaje pendiente
+                            user.pending_message_text = None
+                            user.save()
+                            
+                            # Procesar el mensaje como si fuera nuevo
+                            message_text = pending_message
+                            
+                            # Enviar mensaje de confirmación
+                            whatsapp.send_message(from_phone, 
+                                "¡Gracias por aceptar nuestras políticas! Ahora podemos ayudarte.")
+                            
+                        else:
+                            # No hay mensaje pendiente, enviar bienvenida
+                            whatsapp.send_message(from_phone, 
+                                f"¡Bienvenido/a a {company.name}! ¿En qué podemos ayudarte hoy?")
+                            
+                            # Terminar procesamiento
+                            return HttpResponse('OK', status=200)
+                            
+                    elif button_id == "reject_policies":
+                        # El usuario rechazó las políticas
+                        whatsapp.send_message(from_phone, 
+                            "Entendemos tu decisión. Para poder utilizar nuestro servicio es necesario aceptar las políticas de privacidad. " +
+                            "Si cambias de opinión, puedes escribirnos nuevamente.")
+                        
+                        # No procesar más mensajes
+                        user.waiting_policy_acceptance = False
+                        user.save()
+                        return HttpResponse('OK', status=200)
+                        
+                else:
+                    # Primer mensaje o mensaje sin respuesta a políticas
+                    user.pending_message_text = message_text
+                    user.waiting_policy_acceptance = True
+                    user.save()
+                    
+                    # Mensaje apropiado según sea aceptación inicial o actualización
+                    if needs_update:
+                        header_text = f"Actualización de Políticas v{policy.version}"
+                        intro_text = f"Hemos actualizado nuestras políticas. Para continuar usando nuestro servicio, necesitas aceptar la nueva versión."
+                    else:
+                        header_text = "Políticas de Privacidad"
+                        intro_text = policy.description
+                    
+                    # Obtener la política activa
+                    policy = policy_service.get_active_policy()
+                    
+                    # Registrar lo que estamos utilizando
+                    if hasattr(policy, 'id'):
+                        logger.info(f"Usando política activa de la DB: ID={policy.id}, título={policy.title}, versión={policy.version}")
+                    else:
+                        logger.info(f"Usando política predeterminada: {policy.get('title')}, v{policy.get('version')}")
+                    
+                    # Enviar mensaje interactivo para aceptación de políticas
+                    response = whatsapp.send_policy_acceptance_message(from_phone, policy)
+                    
+                    # Si el usuario responde a este mensaje con "más detalles" o similar, podríamos
+                    # implementar el envío de políticas completas, pero por ahora es suficiente
+                    
+                    # No procesar más este mensaje
+                    return HttpResponse('OK', status=200)
+
             # Registrar la interacción y crear/obtener sesión
             company_service.record_user_company_interaction(user, company)
             session = session_service.get_or_create_session(user, company)
@@ -105,6 +213,23 @@ def webhook(request):
             # PROCESAMIENTO DE MENSAJES INTERACTIVOS (BOTONES)
             if metadata.get("type") == "interactive" and "button_id" in metadata:
                 button_id = metadata.get("button_id")
+                
+                # Manejar botón para ver políticas completas
+                if button_id == "view_full_policies":
+                    logger.info(f"Usuario {user.whatsapp_number} solicita ver políticas completas")
+                    
+                    # Obtener la política activa
+                    policy = PolicyVersion.objects.filter(active=True).first()
+                    if not policy:
+                        whatsapp.send_message(from_phone, "Lo sentimos, no se encontraron las políticas detalladas. Por favor, contacta con soporte.")
+                        return HttpResponse('OK', status=200)
+                        
+                    # Enviar políticas detalladas
+                    responses = whatsapp.send_full_policy_details(from_phone, policy)
+                    logger.info(f"Enviados {len(responses)} mensajes con detalles de políticas al usuario {user.whatsapp_number}")
+                    
+                    # No procesar más este mensaje
+                    return HttpResponse('OK', status=200)
                 
                 # Procesar botones de feedback
                 if button_id in ["positive", "negative", "comment"]:
@@ -137,7 +262,7 @@ def webhook(request):
                         feedback_service.process_feedback_response(recent_session, user, company, 'negative')
                         whatsapp.send_message(from_phone, "Lamentamos que tu experiencia no fuera satisfactoria. Trabajaremos para mejorar nuestro servicio.")
                         
-                    elif button_id == "comment":
+                    if button_id == "comment":
                         # Usuario quiere dejar un comentario
                         whatsapp.send_message(from_phone, "Por favor, cuéntanos tu experiencia o sugerencia para mejorar nuestro servicio:")
                         
