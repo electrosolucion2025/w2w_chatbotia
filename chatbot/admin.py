@@ -420,3 +420,45 @@ class PolicyAcceptanceAdmin(admin.ModelAdmin):
     list_filter = ('accepted_at', 'policy_version')
     search_fields = ('user__name', 'user__whatsapp_number', 'policy_version__version')
     readonly_fields = ('user', 'policy_version', 'accepted_at', 'ip_address', 'user_agent')
+
+from django.contrib import admin
+from django.utils.html import format_html
+from .models import AudioMessage
+
+@admin.register(AudioMessage)
+class AudioMessageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'message_info', 'created_at', 'processing_status', 'audio_player', 'short_transcription')
+    list_filter = ('processing_status', 'created_at')
+    search_fields = ('transcription', 'message__message_text')
+    readonly_fields = ('created_at', 'updated_at', 'audio_player', 'full_transcription')
+    
+    def message_info(self, obj):
+        if obj.message:
+            return f"{obj.message.user.whatsapp_number} - {obj.message.created_at.strftime('%d/%m/%Y %H:%M')}"
+        return "No message"
+    
+    def audio_player(self, obj):
+        if obj.audio_file:
+            return format_html(
+                '<audio controls style="width:300px"><source src="{}" type="audio/ogg">Tu navegador no soporta audio</audio>',
+                obj.audio_file.url
+            )
+        return "No audio File"
+    
+    def short_transcription(self, obj):
+        if obj.transcription:
+            text = obj.transcription[:50]
+            if len(obj.transcription) > 50:
+                text += "..."
+            return text
+        return "No transcription"
+    
+    def full_transcription(self, obj):
+        if obj.transcription:
+            return obj.transcription
+        return "No transcription"
+    
+    audio_player.short_description = "Player"
+    short_transcription.short_description = "Transcription"
+    full_transcription.short_description = "Full transcription"
+    message_info.short_description = "Message"

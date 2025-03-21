@@ -12,6 +12,7 @@ from .models import Message, Session, PolicyVersion
 from .services.message_service import MessageService
 from .services.feedback_service import FeedbackService
 from .services.policy_service import PolicyService
+from .services.whisper_service import WhisperService
 
 # Inicializa los servicios
 company_service = CompanyService()
@@ -20,6 +21,7 @@ session_service = SessionService()
 message_service = MessageService()
 feedback_service = FeedbackService()
 policy_service = PolicyService()
+whisper_service = WhisperService()
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +212,74 @@ def webhook(request):
                 logger.error(f"No se pudo crear/obtener sesión para {user.whatsapp_number}")
                 return HttpResponse('OK', status=200)
             
+            # Detectar primero el tipo de mensaje para aplicar flujo específico
+            message_type = metadata.get("type")
+
+            # Manejar primero los mensajes de audio ya que tienen un flujo especial
+            if message_type == "audio":
+                # Procesar mensaje de audio
+                audio_id = metadata.get("audio_id")
+                
+                if not audio_id:
+                    logger.error("Mensaje de audio recibido sin ID")
+                    return HttpResponse('OK', status=200)
+                
+                # Crear sesión para el usuario
+                session = session_service.get_or_create_session(user, company)
+                
+                # Crear mensaje inicial (se actualizará después con la transcripción)
+                message = Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text="[Procesando mensaje de audio...]",
+                    message_type="audio",
+                    is_from_user=True
+                )
+                
+                # Notificar al usuario que estamos procesando
+                whatsapp.send_message(
+                    from_phone, 
+                    "Estoy procesando tu mensaje de voz, dame un momento..."
+                )
+                
+                # Procesar el audio (descargar y transcribir)
+                result = whisper_service.process_whatsapp_audio(message, audio_id, company)
+                
+                if result["success"]:
+                    # Transcripción exitosa
+                    transcription = result["transcription"]
+                    logger.info(f"Audio transcrito: {transcription[:100]}...")
+                    
+                    # Procesar el texto transcrito para obtener respuesta
+                    # IMPORTANTE: Corregimos los argumentos para coincidir con la firma del método
+                    ai_response = conversation_service.generate_response(
+                        user_id=from_phone,
+                        message=transcription,
+                        company_info=company_service.get_company_info(company)
+                    )
+                    
+                    # Crear mensaje de respuesta
+                    response_message = Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=ai_response,
+                        message_type="text",
+                        is_from_user=False
+                    )
+                    
+                    # Enviar respuesta al usuario
+                    whatsapp.send_message(from_phone, ai_response)
+                    
+                else:
+                    # Error en la transcripción
+                    error_msg = "Lo siento, no pude entender tu mensaje de voz. ¿Podrías intentar de nuevo o enviar un mensaje de texto?"
+                    whatsapp.send_message(from_phone, error_msg)
+                    logger.error(f"Error procesando audio: {result.get('error', 'Unknown error')}")
+                
+                return HttpResponse('OK', status=200)
+
             # PROCESAMIENTO DE MENSAJES INTERACTIVOS (BOTONES)
             if metadata.get("type") == "interactive" and "button_id" in metadata:
                 button_id = metadata.get("button_id")

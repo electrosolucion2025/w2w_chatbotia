@@ -180,3 +180,6 @@ LOGGING = {
 }
 
 # APPEND_SLASH = False  # Disable appending a slash to URLs
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

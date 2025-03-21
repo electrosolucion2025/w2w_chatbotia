@@ -266,6 +266,23 @@ class WhatsAppService:
                     logger.info(f"Received unsupported interactive type: {interactive_type}")
                     return None, None, None, None
                     
+            elif message_type == "audio":
+                # Procesar mensaje de audio
+                audio = message.get("audio", {})
+                audio_id = audio.get("id")
+                
+                if not audio_id:
+                    logger.error(f"Mensaje de audio sin ID recibido de {from_phone}")
+                    return None, None, None, None
+                
+                logger.info(f"Mensaje de audio recibido de {from_phone}, ID: {audio_id}")
+                
+                # Añadir ID del audio a los metadatos
+                metadata["audio_id"] = audio_id
+                
+                # Devolver información básica para el mensaje de audio
+                return from_phone, "[Audio Message]", message_id, metadata
+                    
             else:
                 # Otros tipos de mensajes (imagen, audio, etc.)
                 logger.info(f"Received non-text message type: {message_type}")
@@ -423,6 +440,45 @@ class WhatsAppService:
         responses.append(final_response)
         
         return responses
+    
+    def get_media_url(self, media_id):
+        """
+        Obtiene la URL de descarga para un archivo multimedia
+        
+        Args:
+            media_id (str): ID del archivo multimedia
+            
+        Returns:
+            str or None: URL del archivo o None si hay error
+        """
+        try:
+            import requests
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            url = f"{self.BASE_URL}/{media_id}"
+            headers = {
+                "Authorization": f"Bearer {self.api_token}"
+            }
+            
+            logger.debug(f"Obteniendo URL para media ID: {media_id}")
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "url" in data:
+                    logger.info(f"URL de media obtenida correctamente: {data['url'][:30]}...")
+                    return data["url"]
+                else:
+                    logger.error("Respuesta no contiene URL")
+            else:
+                logger.error(f"Error obteniendo URL: {response.status_code}")
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error en get_media_url: {str(e)}")
+            return None
         
     def _split_long_text(self, text, max_length):
         """
