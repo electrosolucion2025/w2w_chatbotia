@@ -93,6 +93,7 @@ class OpenAIService:
         # Add a general instruction
         prompt += "Tu objetivo es ayudar a los clientes respondiendo sus preguntas de manera amable y profesional. "
         prompt += "Utiliza la siguiente información para responder consultas específicas. "
+        prompt += "Traduce tambien los titulos de las secciones al idioma indicado en el codigo ISO / lenguage.\n\n"
         
         # Add company information sections
         sections = []

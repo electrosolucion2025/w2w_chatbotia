@@ -203,6 +203,16 @@ class CompanyAdmin(admin.ModelAdmin):
         from django.contrib import messages
         messages.success(request, "Estadísticas de feedback actualizadas correctamente")
         return HttpResponseRedirect(f"../")
+    
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        extra_context = extra_context or {}
+        extra_context['show_refresh_button'] = True  # Mostrar el botón en la vista de cambio
+        return super().change_view(request, object_id, form_url, extra_context)
+    
+    def add_view(self, request, form_url='', extra_context=None):
+        extra_context = extra_context or {}
+        extra_context['show_refresh_button'] = False  # No mostrar el botón en la vista de añadir
+        return super().add_view(request, form_url, extra_context)
 
 class UserCompanyInteractionInline(admin.TabularInline):
     model = UserCompanyInteraction
