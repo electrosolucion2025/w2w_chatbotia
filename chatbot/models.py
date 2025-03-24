@@ -45,6 +45,19 @@ class User(models.Model):
     waiting_policy_acceptance = models.BooleanField(default=False)
     pending_message_text = models.TextField(blank=True, null=True)
     
+    # Nuevos campos para gestión de idiomas
+    language = models.CharField(
+        max_length=10,
+        default=None,
+        help_text="Código ISO del idioma preferido",
+        blank=True,
+        null=True,
+    )
+    waiting_for_language = models.BooleanField(
+        default=False,
+        help_text="Indica si el usuario está esperando seleccionar un idioma"
+    )
+    
     def __str__(self):
         return self.name or self.whatsapp_number
     

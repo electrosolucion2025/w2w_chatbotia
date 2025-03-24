@@ -12,7 +12,7 @@ class OpenAIService:
         self.model = settings.OPENAI_MODEL
         openai.api_key = self.api_key
         
-    def generate_response(self, message, context=None, company_info=None, is_first_message=False):
+    def generate_response(self, message, context=None, company_info=None, is_first_message=False, language_code='es'):
         """
         Generate a response using OpenAI
         
@@ -26,7 +26,10 @@ class OpenAIService:
             str: The generated response
         """
         try:
-            system_prompt = self._create_system_prompt(company_info)
+            system_prompt = self._create_system_prompt(company_info, language_code)
+            
+            # Log language code for debugging
+            logger.info(f"Generating response in language: {language_code}")
             
             # Add first message indicator if needed
             if is_first_message:
@@ -67,7 +70,7 @@ class OpenAIService:
             logger.error(f"Error generating response: {e}")
             return "Lo siento, en este momento no puedo procesar tu solicitud. Por favor, intenta de nuevo más tarde."
         
-    def _create_system_prompt(self, company_info):
+    def _create_system_prompt(self, company_info, language_code='es'):
         """
         Create a system prompt based on company information
         
@@ -77,12 +80,15 @@ class OpenAIService:
         Returns:
             str: The system prompt
         """
+        # Instrucción clara de idioma
+        prompt = f"INSTRUCCIÓN IMPORTANTE: Traduce tu respuesta al siguiente codigo ISO / lenguage: '{language_code}'. Adapta tu tono y estilo a este idioma.\n\n"
+    
         if not company_info:
             return "Eres un asistente virtual que ayuda a los clientes con sus consultas."
         
         # Start with the company name
         company_name = company_info.get('name', 'la empresa')
-        prompt = f"Eres el asistente virtual de {company_name}. "
+        prompt += f"Eres el asistente virtual de {company_name}. "
         
         # Add a general instruction
         prompt += "Tu objetivo es ayudar a los clientes respondiendo sus preguntas de manera amable y profesional. "

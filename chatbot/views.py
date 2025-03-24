@@ -13,6 +13,7 @@ from .services.message_service import MessageService
 from .services.feedback_service import FeedbackService
 from .services.policy_service import PolicyService
 from .services.whisper_service import WhisperService
+from .services.language_service import LanguageService
 
 # Inicializa los servicios
 company_service = CompanyService()
@@ -22,6 +23,7 @@ message_service = MessageService()
 feedback_service = FeedbackService()
 policy_service = PolicyService()
 whisper_service = WhisperService()
+language_service = LanguageService()
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,231 @@ def webhook(request):
                     # No procesar más este mensaje
                     return HttpResponse('OK', status=200)
 
+            # Verificar si es una nueva conversación - SIMPLIFICADO
+            is_new_conversation = False
+
+            # Si el usuario no tiene mensajes previos o es nuevo, es una nueva conversación
+            message_count = Message.objects.filter(user=user).count()
+            if message_count == 0:
+                logger.info(f"Usuario nuevo detectado: {from_phone}")
+                is_new_conversation = True
+
+            # Verificar si requiere selección de idioma (no tiene idioma Y no está esperando uno)
+            is_language_selection_needed = False
+            if (not hasattr(user, 'language') or not user.language):
+                # Solo si no está esperando selección de idioma
+                if not hasattr(user, 'waiting_for_language') or not user.waiting_for_language:
+                    logger.info(f"Usuario sin idioma configurado y no esperando: {from_phone}")
+                    is_language_selection_needed = True
+                else:
+                    logger.info(f"Usuario esperando selección de idioma: {from_phone}")
+
+            # Si el mensaje es tipo "text" (no botón interactivo) y es nueva conversación
+            if is_language_selection_needed and metadata.get("type") == "text":
+                logger.info(f"Enviando selector de idioma a {from_phone}")
+                
+                # Obtener o crear sesión
+                session = session_service.get_or_create_session(user, company)
+                
+                # Enviar mensaje de selección de idioma
+                response = whatsapp.send_language_selection_message(from_phone)
+                if not response:
+                    logger.error(f"Error enviando selector de idioma a {from_phone}")
+                
+                # Guardar mensaje entrante
+                Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text=message_text,
+                    message_type="text",
+                    is_from_user=True
+                )
+                
+                # Guardar mensaje de selección de idioma
+                Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text="[Mensaje de selección de idioma]",
+                    message_type="interactive",
+                    is_from_user=False
+                )
+                
+                return HttpResponse('OK', status=200)
+
+            # Obtener o crear la sesión activa
+            if 'session' not in locals() or not session:
+                session = session_service.get_or_create_session(user, company)
+
+            # PROCESAR BOTONES DE IDIOMA
+            if metadata.get("type") == "interactive" and "button_id" in metadata:
+                button_id = metadata.get("button_id")
+                
+                # Si es un botón de selección de idioma
+                if button_id.startswith("lang_"):
+                    language_code = button_id.replace("lang_", "")
+                    logger.info(f"Usuario {from_phone} seleccionó detección automática de idioma")
+                    
+                    if language_code == "detect":
+                        logger.info(f"Usuario {from_phone} seleccionó detección automática de idioma")
+                        user.waiting_for_language = True
+                        user.save()  # Guardar explícitamente
+                        
+                        # Verificar que se guardó correctamente
+                        user.refresh_from_db()
+                        logger.info(f"Estado de waiting_for_language después de guardar: {user.waiting_for_language}")
+                        
+                        # Pedir que escriba en su idioma pero de forma más natural
+                        request_message = "Por favor, escribe tu pregunta o mensaje en tu idioma preferido y te responderé automáticamente en ese mismo idioma.\n\nPlease write your question or message in your preferred language and I'll respond automatically in that same language."
+                        whatsapp.send_message(from_phone, request_message)
+                        
+                        # Guardar interacción en BD
+                        Message.objects.create(
+                            company=company,
+                            session=session,
+                            user=user,
+                            message_text="[Seleccionó: Auto-detect]",
+                            message_type="interactive",
+                            is_from_user=True
+                        )
+                        
+                        Message.objects.create(
+                            company=company,
+                            session=session,
+                            user=user,
+                            message_text=request_message,
+                            message_type="text",
+                            is_from_user=False
+                        )       
+                        
+                        return HttpResponse('OK', status=200)         
+                    else:
+                        # Usuario seleccionó un idioma específico (es, en, etc.)
+                        user.language = language_code
+                        user.waiting_for_language = False
+                        user.save()
+                        
+                        logger.info(f"Idioma {language_code} establecido para usuario {from_phone}")
+                        
+                        # Guardar selección en la BD
+                        Message.objects.create(
+                            company=company,
+                            session=session, 
+                            user=user,
+                            message_text=f"[Seleccionó idioma: {language_code}]",
+                            message_type="interactive",
+                            is_from_user=True
+                        )
+                        
+                        # Enviar mensaje de bienvenida directamente
+                        company_info = company_service.get_company_info(company)
+                        
+                        # Generar mensaje de bienvenida del bot
+                        welcome_response = conversation_service.generate_response(
+                            user_id=from_phone,
+                            message="", 
+                            company_info=company_info,
+                            language_code=language_code,
+                            is_first_message=True
+                        )
+                        
+                        # Enviar mensaje de bienvenida
+                        whatsapp.send_message(from_phone, welcome_response)
+                        
+                        # Guardar mensaje en BD
+                        Message.objects.create(
+                            company=company,
+                            session=session,
+                            user=user,
+                            message_text=welcome_response,
+                            message_type="text",
+                            is_from_user=False
+                        )
+                        
+                        return HttpResponse('OK', status=200)
+
+            # PROCESAR RESPUESTA DE DETECCIÓN DE IDIOMA
+            if hasattr(user, 'waiting_for_language') and user.waiting_for_language and metadata.get("type") == "text":
+                # Detectar idioma del texto enviado
+                detected_language = language_service.detect_language_with_openai(message_text)
+                
+                # Actualizar idioma del usuario
+                user.language = detected_language["code"]
+                user.waiting_for_language = False
+                user.save()
+                
+                logger.info(f"Idioma detectado para {from_phone}: {detected_language['name']} ({detected_language['code']})")
+                
+                # NO enviar confirmación de idioma detectado
+                # En su lugar, procesar directamente este mensaje como pregunta
+                
+                # Crear sesión si no existe
+                session = session_service.get_or_create_session(user, company)
+                
+                # Guardar mensaje entrante del usuario
+                Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text=message_text,
+                    message_type="text",
+                    is_from_user=True
+                )
+                
+                # Obtener información de la empresa
+                company_info = company_service.get_company_info(company)
+                
+                # Generar respuesta de la IA usando el idioma detectado
+                ai_response = conversation_service.generate_response(
+                    user_id=from_phone,
+                    message=message_text,
+                    company_info=company_info,
+                    language_code=user.language
+                )
+                
+                # Enviar respuesta
+                whatsapp.send_message(from_phone, ai_response)
+                
+                # Guardar respuesta en BD
+                Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text=ai_response,
+                    message_type="text",
+                    is_from_user=False
+                )
+                
+                return HttpResponse('OK', status=200)
+
+            # MOSTRAR SELECCIÓN DE IDIOMA PARA CONVERSACIONES NUEVAS
+            if is_new_conversation:
+                # Enviar mensaje de selección de idioma
+                whatsapp.send_language_selection_message(from_phone)
+                
+                # Guardar mensaje entrante inicial
+                Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text=message_text,
+                    message_type=metadata.get("type", "text"),
+                    is_from_user=True
+                )
+                
+                # Guardar mensaje de selección de idioma
+                Message.objects.create(
+                    company=company,
+                    session=session,
+                    user=user,
+                    message_text="[Mensaje de selección de idioma]",
+                    message_type="interactive",
+                    is_from_user=False
+                )
+                
+                return HttpResponse('OK', status=200)
+
             # Registrar la interacción y crear/obtener sesión
             company_service.record_user_company_interaction(user, company)
             session = session_service.get_or_create_session(user, company)
@@ -256,7 +483,8 @@ def webhook(request):
                     ai_response = conversation_service.generate_response(
                         user_id=from_phone,
                         message=transcription,
-                        company_info=company_service.get_company_info(company)
+                        company_info=company_service.get_company_info(company),
+                        language_code=user.language
                     )
                     
                     # Crear mensaje de respuesta
@@ -401,7 +629,8 @@ def webhook(request):
                 ai_response = conversation_service.generate_response(
                     user_id=from_phone,
                     message=message_text,
-                    company_info=company_info
+                    company_info=company_info,
+                    language_code=user.language
                 )
                 
                 # Enviar respuesta al usuario

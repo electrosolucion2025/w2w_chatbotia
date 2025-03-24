@@ -535,3 +535,37 @@ class WhatsAppService:
                     i = end_pos
         
         return final_parts
+    
+    def send_language_selection_message(self, phone_number):
+        """
+        Envía un mensaje interactivo para selección de idioma
+        
+        Args:
+            phone_number (str): Número de teléfono del destinatario
+            
+        Returns:
+            dict: Respuesta de la API de WhatsApp
+        """
+        try:
+            # Botones para selección de idioma
+            buttons = [
+                {"id": "lang_es", "title": "🇪🇸 Español"},
+                {"id": "lang_en", "title": "🇬🇧 English"},
+                {"id": "lang_detect", "title": "🌐 Auto-detect"}
+            ]
+            
+            # Texto del mensaje
+            body_text = "👋 ¡Bienvenido! Por favor, selecciona tu idioma preferido.\n\nWelcome! Please select your preferred language."
+            
+            # Enviar mensaje interactivo
+            return self.send_interactive_message(
+                phone_number=phone_number,
+                header_text="Idioma / Language",
+                body_text=body_text,
+                buttons=buttons,
+                footer_text="Whats2Want Chatbot"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error enviando selección de idioma: {e}")
+            return None
