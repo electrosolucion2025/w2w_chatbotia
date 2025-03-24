@@ -2,11 +2,15 @@ import logging
 from django.utils import timezone
 from datetime import timedelta
 from ..models import Session
+from .conversation_analysis_service import ConversationAnalysisService
 
 logger = logging.getLogger(__name__)
 
 class SessionService:
     """Servicio simplificado para gestionar sesiones de usuario"""
+    
+    def __init__(self):
+        self.analysis_service = ConversationAnalysisService()
     
     def get_or_create_session(self, user, company):
         """
@@ -49,7 +53,7 @@ class SessionService:
             
             count = 0
             for session in sessions:
-                session.end_session()
+                self._process_session_end(session)
                 count += 1
             
             if count > 0:
@@ -76,14 +80,46 @@ class SessionService:
             
             count = 0
             for session in inactive_sessions:
-                session.end_session()
+                self._process_session_end(session)
                 count += 1
             
             if count > 0:
-                logger.info(f"Finalizadas {count} sesiones inactivas (> {minutes} minutos)")
+                logger.info(f"Finalizadas y analizadas {count} sesiones inactivas (> {minutes} minutos)")
             
             return count
             
         except Exception as e:
             logger.error(f"Error al finalizar sesiones inactivas: {e}")
             return 0
+    
+    def _process_session_end(self, session):
+        """
+        Finaliza una sesión y ejecuta análisis de conversación
+        """
+        # Finalizar la sesión
+        session.end_session()
+        
+        # Ejecutar análisis de la conversación
+        try:
+            # Analizar la sesión
+            analysis = self.analysis_service.analyze_session(session)
+            
+            # Si hay análisis, guardarlo en la sesión
+            if analysis:
+                session.analysis_results = analysis
+                session.save()
+                logger.info(f"Análisis completado y guardado para sesión {session.id}")
+                
+        except Exception as e:
+            logger.error(f"Error en análisis de sesión {session.id}: {e}")
+    
+    def end_session(self, session):
+        """
+        Finaliza una sesión específica y ejecuta análisis
+        """
+        try:
+            self._process_session_end(session)
+            return True
+        except Exception as e:
+            logger.error(f"Error al finalizar sesión {session.id}: {e}")
+            return False

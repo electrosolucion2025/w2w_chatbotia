@@ -1,6 +1,7 @@
 import uuid
 from django.db import models
 from django.utils import timezone
+import json
 
 class Company(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -139,7 +140,30 @@ class Session(models.Model):
     last_activity = models.DateTimeField(auto_now=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     feedback_requested = models.BooleanField(default=False)
+    analysis_results_json = models.TextField(
+        blank=True, 
+        null=True,
+        help_text="Resultados del análisis de la conversación (JSON)"
+    )
     
+    @property
+    def analysis_results(self):
+        """Obtiene los resultados del análisis como diccionario"""
+        if not self.analysis_results_json:
+            return None
+        try:
+            return json.loads(self.analysis_results_json)
+        except:
+            return None
+        
+    @analysis_results.setter
+    def analysis_results(self, value):
+        """Guarda los resultados del análisis como JSON"""
+        if value is None:
+            self.analysis_results_json = None
+        else:
+            self.analysis_results_json = json.dumps(value)
+
     def end_session(self):
         """End the session"""
         from django.utils import timezone
@@ -153,6 +177,7 @@ class Session(models.Model):
     class Meta:
         verbose_name = "Session"
         verbose_name_plural = "Sessions"
+
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -297,3 +322,9 @@ class PolicyAcceptance(models.Model):
         verbose_name = "Policy Acceptance"
         verbose_name_plural = "Policy Acceptances"
         ordering = ['-accepted_at']
+
+class LeadStatistics(Session):
+    class Meta:
+        proxy = True
+        verbose_name = 'Lead Statistics'
+        verbose_name_plural = 'Lead Statistics'

@@ -1,0 +1,147 @@
+{% extends "admin/change_list.html" %}
+{% load static %}
+
+{% block content_title %}
+    <h1>Estadísticas de Conversaciones</h1>
+{% endblock %}
+
+{% block content %}
+<div class="module" style="width: 100%; margin-bottom: 20px;">
+    <!-- Explicación -->
+    <div style="margin-bottom: 20px;">
+        <p>Esta página muestra estadísticas de análisis de conversaciones con los clientes, basadas en intenciones detectadas y niveles de interés.</p>
+    </div>
+    
+    <div style="width: 100%; display: flex; flex-direction: column; gap: 30px;">
+        <!-- Gráfico de intenciones -->
+        <div style="padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.1);">
+            <h2 style="margin-top: 0; color: #444; margin-bottom: 20px; border-bottom: 2px solid #f2f2f2; padding-bottom: 10px;">Intenciones de Usuario</h2>
+            
+            <!-- Cálculo del total para porcentajes -->
+            {% with total_intents=0 %}
+                {% for intent, count in intent_stats %}
+                    {% with total_intents=total_intents|add:count %}{% endwith %}
+                {% endfor %}
+            
+                <div style="display: flex; flex-direction: column; gap: 15px;">
+                    {% for intent, count in intent_stats %}
+                        {% with percentage=count|floatformat:0|default:0 %}
+                            <div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <div>
+                                        {% if intent == '"interes_producto"' or intent == 'interes_producto' %}
+                                            <strong style="color: #28a745;">Interés en Productos</strong>
+                                        {% elif intent == '"interes_servicio"' or intent == 'interes_servicio' %}
+                                            <strong style="color: #17a2b8;">Interés en Servicios</strong>
+                                        {% elif intent == '"consulta_informacion"' or intent == 'consulta_informacion' %}
+                                            <strong style="color: #007bff;">Consulta de Información</strong>
+                                        {% elif intent == '"queja"' or intent == 'queja' %}
+                                            <strong style="color: #dc3545;">Queja o Reclamación</strong>
+                                        {% else %}
+                                            <strong style="color: #6c757d;">{{ intent|cut:'"' }}</strong>
+                                        {% endif %}
+                                    </div>
+                                    <div><strong>{{ count }}</strong> conversaciones</div>
+                                </div>
+                                
+                                <div style="height: 26px; width: 100%; background-color: #f2f2f2; border-radius: 13px; position: relative; overflow: hidden;">
+                                    <div style="position: absolute; top: 0; left: 0; height: 100%; width: {{ percentage }}%; 
+                                        background-color: 
+                                        {% if intent == '"interes_producto"' or intent == 'interes_producto' %}#28a745
+                                        {% elif intent == '"interes_servicio"' or intent == 'interes_servicio' %}#17a2b8
+                                        {% elif intent == '"consulta_informacion"' or intent == 'consulta_informacion' %}#007bff
+                                        {% elif intent == '"queja"' or intent == 'queja' %}#dc3545
+                                        {% else %}#6c757d{% endif %};
+                                        display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;">
+                                        {% if percentage > 15 %}
+                                            <span style="color: white; font-weight: bold;">{{ percentage }}%</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if percentage <= 15 %}
+                                        <span style="position: absolute; top: 0; right: 10px; line-height: 26px; color: #333; font-weight: bold;">{{ percentage }}%</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endwith %}
+                    {% empty %}
+                        <div style="text-align: center; padding: 15px; background-color: #f9f9f9; border-radius: 5px;">
+                            No hay datos de intenciones disponibles
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endwith %}
+        </div>
+        
+        <!-- Gráfico de niveles de interés -->
+        <div style="padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.1);">
+            <h2 style="margin-top: 0; color: #444; margin-bottom: 20px; border-bottom: 2px solid #f2f2f2; padding-bottom: 10px;">Niveles de Interés de Compra</h2>
+            
+            <!-- Cálculo del total para porcentajes -->
+            {% with total_interests=0 %}
+                {% for interest, count in interest_stats %}
+                    {% with total_interests=total_interests|add:count %}{% endwith %}
+                {% endfor %}
+                
+                <div style="display: flex; flex-direction: column; gap: 15px;">
+                    {% for interest, count in interest_stats %}
+                        {% with percentage=count|floatformat:0|default:0 %}
+                            <div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <div>
+                                        {% if interest == '"alto"' or interest == 'alto' %}
+                                            <strong style="color: #28a745; font-size: 1.1em;">ALTO</strong>
+                                        {% elif interest == '"medio"' or interest == 'medio' %}
+                                            <strong style="color: #ffc107; font-size: 1.1em;">MEDIO</strong>
+                                        {% elif interest == '"bajo"' or interest == 'bajo' %}
+                                            <strong style="color: #17a2b8; font-size: 1.1em;">BAJO</strong>
+                                        {% else %}
+                                            <strong style="color: #6c757d; font-size: 1.1em;">{{ interest|cut:'"' }}</strong>
+                                        {% endif %}
+                                    </div>
+                                    <div><strong>{{ count }}</strong> conversaciones</div>
+                                </div>
+                                
+                                <div style="height: 26px; width: 100%; background-color: #f2f2f2; border-radius: 13px; position: relative; overflow: hidden;">
+                                    <div style="position: absolute; top: 0; left: 0; height: 100%; width: {{ percentage }}%;
+                                        background-color: 
+                                        {% if interest == '"alto"' or interest == 'alto' %}#28a745
+                                        {% elif interest == '"medio"' or interest == 'medio' %}#ffc107
+                                        {% elif interest == '"bajo"' or interest == 'bajo' %}#17a2b8
+                                        {% else %}#6c757d{% endif %};
+                                        display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;">
+                                        {% if percentage > 15 %}
+                                            <span style="color: {% if interest == '"medio"' or interest == 'medio' %}#333{% else %}white{% endif %}; font-weight: bold;">{{ percentage }}%</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if percentage <= 15 %}
+                                        <span style="position: absolute; top: 0; right: 10px; line-height: 26px; color: #333; font-weight: bold;">{{ percentage }}%</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endwith %}
+                    {% empty %}
+                        <div style="text-align: center; padding: 15px; background-color: #f9f9f9; border-radius: 5px;">
+                            No hay datos de niveles de interés disponibles
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endwith %}
+        </div>
+    </div>
+
+    <!-- Información adicional y fecha -->
+    <div style="margin-top: 30px; display: flex; justify-content: space-between;">
+        <div style="color: #666; font-size: 0.9em;">
+            Datos actualizados a: {% now "j F Y, H:i" %}
+        </div>
+        <div>
+            <a href="{% url 'admin:chatbot_session_changelist' %}" class="button" style="padding: 8px 15px; background-color: #79aec8; color: white; text-decoration: none; border-radius: 4px;">Volver a Sesiones</a>
+        </div>
+    </div>
+</div>
+
+{% if cl %}
+    {{ block.super }}
+{% endif %}
+
+{% endblock %}

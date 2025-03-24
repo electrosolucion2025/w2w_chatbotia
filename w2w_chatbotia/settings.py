@@ -58,7 +58,7 @@ ROOT_URLCONF = 'w2w_chatbotia.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -134,6 +134,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # OpenAI API settings
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+OPENAI_MODEL_ANALYSIS = os.getenv('OPENAI_MODEL_ANALYSIS', 'gpt-4o-mini')
 
 # WhatsApp API settings
 WHATSAPP_API_TOKEN = os.getenv('WHATSAPP_API_TOKEN')

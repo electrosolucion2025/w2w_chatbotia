@@ -2,6 +2,8 @@ from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 from django.http import HttpResponseRedirect
+
+from chatbot.services.conversation_analysis_service import ConversationAnalysisService
 from .models import *
 from .services.feedback_service import FeedbackService
 
@@ -246,10 +248,11 @@ class MessageInline(admin.TabularInline):
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user_info', 'company_name', 'started_at', 'status', 'duration', 'message_count')
+    list_display = ('id', 'user_info', 'company_name', 'started_at', 'status', 'duration', 'message_count', 'lead_interest')
     list_filter = ('company', 'started_at', 'ended_at')
     search_fields = ('user__name', 'user__whatsapp_number', 'company__name')
     inlines = [MessageInline]
+    readonly_fields = ('user_info', 'company_name', 'status', 'duration', 'message_count', 'analysis_display')
     
     def user_info(self, obj):
         if obj.user.name:
@@ -276,11 +279,178 @@ class SessionAdmin(admin.ModelAdmin):
     def message_count(self, obj):
         return obj.messages.count()
     
+    def lead_interest(self, obj):
+        """Muestra el nivel de interés del lead basado en el análisis"""
+        if not hasattr(obj, 'analysis_results') or not obj.analysis_results:
+            return "-"
+        
+        interest_level = obj.analysis_results.get('purchase_interest_level', 'ninguno')
+        
+        if interest_level == 'alto':
+            return format_html('<span style="color: green; font-weight: bold;">ALTO</span>')
+        elif interest_level == 'medio':
+            return format_html('<span style="color: orange; font-weight: bold;">MEDIO</span>')
+        elif interest_level == 'bajo':
+            return format_html('<span style="color: blue;">BAJO</span>')
+        else:
+            return format_html('<span style="color: gray;">NINGUNO</span>')
+    
+    def analysis_display(self, obj):
+        """Muestra el análisis de la conversación en formato legible"""
+        if not hasattr(obj, 'analysis_results') or not obj.analysis_results:
+            return format_html("<p>No hay análisis disponible para esta sesión.</p>")
+            
+        analysis = obj.analysis_results
+        html = "<div style='max-width: 800px'>"
+        html += "<h3>Análisis de la Conversación</h3>"
+        
+        # Intención principal
+        html += "<div style='margin-bottom: 10px'>"
+        html += "<p style='font-weight: bold; margin-bottom: 5px'>Intención Principal:</p>"
+        intent = analysis.get('primary_intent', 'desconocida')
+        if intent == 'interes_producto':
+            html += "<p style='background-color: #000000; padding: 5px;'>Interés en Productos</p>"
+        elif intent == 'interes_servicio':
+            html += "<p style='background-color: #000000; padding: 5px;'>Interés en Servicios</p>"
+        elif intent == 'consulta_informacion':
+            html += "<p style='background-color: #f2f2f2; padding: 5px;'>Consulta de Información</p>"
+        elif intent == 'queja':
+            html += "<p style='background-color: #fff0f0; padding: 5px;'>Queja o Reclamación</p>"
+        else:
+            html += f"<p style='background-color: #f2f2f2; padding: 5px;'>{intent}</p>"
+        html += "</div>"
+        
+        # Nivel de interés de compra
+        html += "<div style='margin-bottom: 10px'>"
+        html += "<p style='font-weight: bold; margin-bottom: 5px'>Nivel de Interés:</p>"
+        interest = analysis.get('purchase_interest_level', 'ninguno')
+        if interest == 'alto':
+            html += "<p style='color: green; font-weight: bold; padding: 5px;'>ALTO</p>"
+        elif interest == 'medio':
+            html += "<p style='color: orange; font-weight: bold; padding: 5px;'>MEDIO</p>"
+        elif interest == 'bajo':
+            html += "<p style='color: blue; padding: 5px;'>BAJO</p>"
+        else:
+            html += "<p style='color: gray; padding: 5px;'>NINGUNO</p>"
+        html += "</div>"
+        
+        # Sentimiento
+        html += "<div style='margin-bottom: 10px'>"
+        html += "<p style='font-weight: bold; margin-bottom: 5px'>Sentimiento del Usuario:</p>"
+        sentiment = analysis.get('user_sentiment', 'neutral')
+        if sentiment == 'positivo':
+            html += "<p style='color: green; padding: 5px;'>Positivo</p>"
+        elif sentiment == 'negativo':
+            html += "<p style='color: red; padding: 5px;'>Negativo</p>"
+        else:
+            html += "<p style='color: gray; padding: 5px;'>Neutral</p>"
+        html += "</div>"
+        
+        # Intereses específicos
+        if analysis.get('specific_interests'):
+            html += "<div style='margin-bottom: 10px'>"
+            html += "<p style='font-weight: bold; margin-bottom: 5px'>Intereses Específicos:</p>"
+            html += "<ul style='margin-top: 0px'>"
+            for interest in analysis.get('specific_interests', []):
+                html += f"<li>{interest}</li>"
+            html += "</ul>"
+            html += "</div>"
+        
+        # Información de contacto
+        if analysis.get('contact_info', {}).get('value'):
+            html += "<div style='margin-bottom: 10px'>"
+            html += "<p style='font-weight: bold; margin-bottom: 5px'>Información de Contacto:</p>"
+            contact_type = analysis.get('contact_info', {}).get('type', '')
+            contact_value = analysis.get('contact_info', {}).get('value', '')
+            html += f"<p style='padding: 5px;'>{contact_type}: {contact_value}</p>"
+            html += "</div>"
+        
+        # Seguimiento necesario
+        if analysis.get('follow_up_needed'):
+            html += "<div style='margin-bottom: 10px'>"
+            html += "<p style='font-weight: bold; color: red; margin-bottom: 5px'>SEGUIMIENTO REQUERIDO:</p>"
+            html += f"<p style='background-color: #000000; padding: 5px;'>{analysis.get('follow_up_reason', '')}</p>"
+            html += "</div>"
+        
+        # Resumen
+        html += "<div style='margin-bottom: 10px'>"
+        html += "<p style='font-weight: bold; margin-bottom: 5px'>Resumen:</p>"
+        html += f"<p style='background-color: #000000; padding: 10px; border-left: 4px solid #ddd;'>{analysis.get('summary', '')}</p>"
+        html += "</div>"
+        
+        html += "</div>"
+        return format_html(html)
+    
     user_info.short_description = "Usuario"
     company_name.short_description = "Empresa"
     status.short_description = "Estado"
     duration.short_description = "Duración"
     message_count.short_description = "Mensajes"
+    lead_interest.short_description = "Interés"
+    analysis_display.short_description = "Análisis de Conversación"
+
+    def analyze_session(self, request, queryset):
+        """Acción para analizar manualmente las sesiones seleccionadas"""
+        service = ConversationAnalysisService()
+        analyzed = 0
+        
+        for session in queryset:
+            analysis = service.analyze_session(session)
+            if analysis:
+                session.analysis_results = analysis
+                session.save()
+                analyzed += 1
+
+    analyze_session.short_description = "Analizar conversaciones seleccionadas"
+    actions = [analyze_session]
+
+@admin.register(LeadStatistics)
+class LeadStatisticsPanel(admin.ModelAdmin):
+    change_list_template = 'admin/lead_statistics.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        
+        # Obtener estadísticas de intenciones para PostgreSQL
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    analysis_results_json::json->>'primary_intent' as intent,
+                    COUNT(*) as count
+                FROM 
+                    chatbot_session
+                WHERE 
+                    analysis_results_json IS NOT NULL
+                GROUP BY 
+                    intent
+                ORDER BY 
+                    count DESC
+            """)
+            intent_stats = cursor.fetchall()
+            
+        # Obtener estadísticas de nivel de interés para PostgreSQL
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    analysis_results_json::json->>'purchase_interest_level' as interest,
+                    COUNT(*) as count
+                FROM 
+                    chatbot_session
+                WHERE 
+                    analysis_results_json IS NOT NULL
+                GROUP BY 
+                    interest
+                ORDER BY 
+                    count DESC
+            """)
+            interest_stats = cursor.fetchall()
+        
+        # Preparar datos para gráficos
+        extra_context['intent_stats'] = intent_stats
+        extra_context['interest_stats'] = interest_stats
+        
+        return super().changelist_view(request, extra_context=extra_context)
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
