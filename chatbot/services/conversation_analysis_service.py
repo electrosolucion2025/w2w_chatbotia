@@ -2,6 +2,8 @@ import logging
 import json
 from openai import OpenAI
 from django.conf import settings
+# Importamos el nuevo servicio de email
+from .email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +13,8 @@ class ConversationAnalysisService:
     def __init__(self):
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.model = "gpt-4o-mini" if hasattr(settings, 'OPENAI_MODEL_ANALYSIS') else "gpt-4o-mini"
+        # Inicializar servicios necesarios
+        self.email_service = EmailService()
     
     def analyze_session(self, session):
         """
@@ -75,7 +79,21 @@ class ConversationAnalysisService:
             analysis = json.loads(analysis_text)
             
             logger.info(f"Análisis completado para sesión {session.id}")
-            return analysis
+            
+            # Si el análisis fue exitoso
+            if analysis:
+                # Guardamos el análisis en la sesión
+                session.analysis_results = analysis
+                session.save()
+                
+                # Si es un lead de alta/media calidad, enviar notificación por email
+                interest_level = analysis.get('purchase_interest_level', 'ninguno')
+                if interest_level in ['alto', 'medio']:
+                    # Enviar notificación por email
+                    self.email_service.send_lead_notification(session.company, session)
+                
+                return analysis
+            return None
             
         except Exception as e:
             logger.error(f"Error analizando sesión {session.id}: {str(e)}")

@@ -135,6 +135,9 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Base URL for links in emails
+BASE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
+
 # OpenAI API settings
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
@@ -144,6 +147,11 @@ OPENAI_MODEL_ANALYSIS = os.getenv('OPENAI_MODEL_ANALYSIS', 'gpt-4o-mini')
 WHATSAPP_API_TOKEN = os.getenv('WHATSAPP_API_TOKEN')
 WHATSAPP_PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID')
 WHATSAPP_VERIFY_TOKEN = os.getenv('WHATSAPP_VERIFY_TOKEN')
+
+# SendGrid API settings
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY', '')
+SENDGRID_FROM_EMAIL = os.getenv('SENDGRID_FROM_EMAIL', '')
+SENDGRID_FROM_NAME = os.getenv('SENDGRID_FROM_NAME', 'Chatbot W2W')
 
 # Logging configuration
 LOGGING = {
