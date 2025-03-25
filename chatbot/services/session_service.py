@@ -101,6 +101,83 @@ class SessionService:
             session.ended_at = timezone.now()
             session.save()
             logger.info(f"Sesión {session.id} finalizada")
+            
+        try:
+            # Obtener las credenciales especificas de la empresa
+            company = session.company
+            api_token = company.whatsapp_api_token
+            phone_number_id = company.whatsapp_phone_number_id
+            
+            # Verificar que las credenciales existe
+            if not api_token or not phone_number_id:
+                logger.error(f"Credenciales de WhatsApp no encontradas para la empresa {company.name}")
+                return
+            
+            # Enviar mensaje de despedida al usuario
+            from django.conf import settings
+            from .whatsapp_service import WhatsAppService
+            
+            whatsapp_service = WhatsAppService(
+                api_token=api_token,
+                phone_number_id=phone_number_id,
+            )
+            
+            # Mensaje de despedida
+            farewell_message = (
+                "Parece que ha pasado un tiempo desde tu último mensaje. "
+                "He finalizado esta conversación por inactividad. "
+                "Si necesitas más ayuda, no dudes en escribir de nuevo en cualquier momento. "
+                "¡Gracias por contactar con nosotros!"
+            )
+            
+            # Enviar mensaje de despedida
+            whatsapp_service.send_message(
+                to_phone=session.user.whatsapp_number,
+                message_text=farewell_message,
+            )
+            
+            # Guardar mensaje en la BD
+            from ..models import Message
+            Message.objects.create(
+                session=session,
+                company=session.company,
+                user=session.user,
+                message_text=farewell_message,
+                message_type="text",
+                is_from_user=False,
+            )
+            
+            # Actualizar el estado de la sesión
+            logger.info(f"Enviado mensaje de despedida automático para sesión {session.id}")
+            
+            # Enviar feedback
+            import time
+            time.sleep(2) # Esperar un poco antes de enviar el feedback
+            
+            try:
+                # Importar el servicio de feedback
+                from .feedback_service import FeedbackService
+                feedback_service = FeedbackService()
+                
+                # Enviar solicitud de feedback	
+                feedback_service.send_feedback_request(
+                    whatsapp_service=whatsapp_service,
+                    phone_number=session.user.whatsapp_number,
+                    session=session
+                )
+                
+                # Actualizar la sesión para indicar que se solicito feedback
+                session.feedback_requested = True
+                session.feedback_requested_at = timezone.now()
+                session.save()
+                
+                logger.info(f"Solicitud de feedback enviada a {session.user.whatsapp_number} para sesión {session.id}")
+                
+            except Exception as e:
+                logger.error(f"Error al enviar solicitud de feedback: {e}")
+            
+        except Exception as e:
+            logger.error(f"Error al enviar mensaje de despedida para sesión {session.id}: {e}")
         
         # Ejecutar análisis de la conversación
         try:
