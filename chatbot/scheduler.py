@@ -12,7 +12,7 @@ def close_inactive_sessions():
     """
     logger.info("Ejecutando tarea programada para cerrar sesiones inactivas")
     service = SessionService()
-    count = service.end_inactive_sessions(minutes=5)  # Cerrar después de 5 minutos de inactividad
+    count = service.end_inactive_sessions(minutes=2)  # Cerrar después de 5 minutos de inactividad
     logger.info(f"Se cerraron {count} sesiones inactivas")
 
 def start_scheduler():
@@ -31,7 +31,7 @@ def start_scheduler():
         scheduler.add_job(
             close_inactive_sessions,
             trigger="interval",
-            minutes=5, # Cada 5 minutos
+            minutes=2, # Cada 5 minutos
             id="close_inactive_sessions",
             replace_existing=True,
             max_instances=1,

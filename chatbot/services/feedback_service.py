@@ -47,21 +47,37 @@ class FeedbackService:
         Procesa la respuesta de feedback del usuario
         """
         try:
+            db_feedback_type = feedback_type
+            
+            # Si es una solicitud de comentario, marcarla como tal en la sesión
+            if feedback_type == "comment_requested":
+                # Marca en la sesión que estamos esperando un comentario
+                session.feedback_comment_requested = True
+                session.save(update_fields=['feedback_comment_requested'])
+            
+                # No crear el feedback todavía, esperar el comentario real
+                return None
+            
             # Crear o actualizar feedback
             feedback, created = Feedback.objects.update_or_create(
                 session=session,
                 defaults={
                     'user': user,
                     'company': company,
-                    'rating': feedback_type,
-                    'comment': comment
+                    'rating': db_feedback_type,
+                    'comment': comment if comment else ""
                 }
             )
             
             # Invalidar caché de estadísticas
             from django.core.cache import cache
-            cache_key = f"feedback_stats_{company.id}_30"
-            cache.delete(cache_key)
+            cache_key_patterns = [
+                f"feedback_stats_{company.id}_7",
+                f"feedback_stats_{company.id}_30",
+                f"feedback_stats_{company.id}_90"
+            ]
+            for key in cache_key_patterns:
+                cache.delete(key)
             
             if created:
                 logger.info(f"Nuevo feedback creado para sesión {session.id}: {feedback_type}")

@@ -1,6 +1,7 @@
 import json
 import logging
 from django.http import HttpResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -47,9 +48,8 @@ def webhook(request):
         
     elif request.method == "POST":
         try:
-            # Crear una variable para rastrear si estamos en el flujo de feedback
-            is_feedback_flow = False
-
+            is_feedback_flow = False; # Variable para controlar el flujo de feedback
+            
             # Obtener el cuerpo del webhook
             body = json.loads(request.body)
             
@@ -58,6 +58,11 @@ def webhook(request):
             
             # Parsear el mensaje entrante
             from_phone, message_text, message_id, metadata = default_whatsapp.parse_webhook_message(body)
+            
+            # Verificar primero si es una respuesta de feedback
+            if message_text and is_feedback_response(message_text, from_phone):
+                handle_feedback_response(from_phone, message_text)
+                return HttpResponse('OK', status=200)
             
             # Verificar si es una actualización de estado o si no se pudo extraer información
             if not from_phone or not message_text:
@@ -533,7 +538,7 @@ def webhook(request):
                 if button_id in ["positive", "negative", "comment"]:
                     is_feedback_flow = True
                     # Buscar la última sesión finalizada para feedback
-                    from django.utils import timezone
+                    
                     from datetime import timedelta
                     
                     recent_time = timezone.now() - timedelta(hours=48)
@@ -571,34 +576,6 @@ def webhook(request):
                     
                     return HttpResponse('OK', status=200)
                 
-            # PROCESAMIENTO DE COMENTARIOS DE FEEDBACK
-            from django.core.cache import cache
-            cache_key = f"waiting_feedback_comment_{from_phone}"
-            waiting_session_id = cache.get(cache_key)
-            
-            if waiting_session_id and message_text and not message_text.startswith("BUTTON:"):
-                is_feedback_flow = True
-                try:
-                    feedback_session = Session.objects.get(id=waiting_session_id)
-                    
-                    # Guardar el comentario
-                    feedback_service.process_feedback_response(feedback_session, user, company, 'neutral', comment=message_text)
-                    
-                    # Agradecer al usuario sin reiniciar la conversación completa
-                    whatsapp.send_message(from_phone, "¡Gracias por compartir tu experiencia! Tu comentario nos ayuda a mejorar nuestro servicio.")
-                    
-                    # Eliminar la marca de espera
-                    cache.delete(cache_key)
-                    
-                    # NO UTILIZAR EL CONVERSATION SERVICE AQUÍ
-                    # De esta forma no se crea una nueva entrada en self.conversations
-                    # y no se considera como primer mensaje de una nueva conversación
-                    
-                    return HttpResponse('OK', status=200)
-                    
-                except Exception as e:
-                    logger.error(f"Error procesando comentario de feedback: {e}")
-            
             # PROCESAMIENTO DE MENSAJES REGULARES
             if not is_feedback_flow:
                 # Guardar el mensaje entrante
@@ -665,9 +642,10 @@ def webhook(request):
                     session_service.end_session_for_user(user, company)
                     logger.info(f"Sesión finalizada por respuesta de cierre de la IA: {from_phone}")
                     
-                    # Enviar solicitud de feedback con delay
-                    from threading import Timer
-                    Timer(3.0, send_delayed_feedback_request, args=[from_phone, session.id]).start()
+                    if not session.feedback_requested:
+                        # Enviar solicitud de feedback con delay
+                        from threading import Timer
+                        Timer(2.0, send_delayed_feedback_request, args=[from_phone, session.id]).start()
                     
                 # Verificar cierre de sesión por mensaje del usuario
                 elif any(phrase in message_text.lower() for phrase in ['adios', 'adiós', 'chau', 'hasta luego', 
@@ -690,6 +668,11 @@ def webhook(request):
 def send_delayed_feedback_request(phone_number, session_id):
     try:
         session = Session.objects.get(id=session_id)
+        
+        if session.feedback_requested:
+            logger.info(f"Feedback ya solicitado para sesión {session.id}, no se enviará nuevamente.")
+            return
+        
         company = session.company
         
         # Crear servicio de WhatsApp usando credenciales de la empresa
@@ -703,3 +686,158 @@ def send_delayed_feedback_request(phone_number, session_id):
         
     except Exception as e:
         logger.error(f"Error al enviar feedback con delay: {e}")
+        
+def is_feedback_response(message, phone_number=None):
+    """
+    Determina si un mensaje es una respuesta a una solicitud de feedback
+    """
+    # Verificar si estamos esperando un comentario para este número
+    if phone_number:
+        from django.core.cache import cache
+        cache_key = f"waiting_feedback_comment_{phone_number}"
+        waiting_session_id = cache.get(cache_key)
+        
+        if waiting_session_id:
+            # Estamos esperando un comentario, tratar cualquier mensaje como feedback
+            return True
+    
+    # Posibles respuestas a botones de feedback
+    feedback_responses = [
+        "👍 Buena", "👍 Bueno",
+        "👎 Mejorable",
+        "💬 Comentar",
+        # Si el usuario escribe el emoji directamente
+        "👍", "👎", "💬"
+    ]
+    
+    # También verificar IDs de botones que podrían enviarse
+    button_ids = ["positive", "negative", "comment"]
+    
+    # Si el mensaje exacto coincide con alguna de las respuestas de feedback
+    if message in feedback_responses:
+        return True
+    
+    # Si el mensaje contiene algún ID de botón
+    if any(button_id in message for button_id in button_ids):
+        return True
+    
+    return False
+
+def handle_feedback_response(phone_number, feedback_message):
+    """
+    Procesa una respuesta de feedback sin crear una nueva sesión
+    """
+    try:
+        from .models import User, Session, Feedback
+        from django.utils import timezone
+        from django.core.cache import cache
+        
+        # Buscar usuario por número de teléfono
+        user = User.objects.filter(whatsapp_number=phone_number).first()
+        if not user:
+            logger.error(f"No se encontró usuario para el número {phone_number} al procesar feedback")
+            return
+            
+        # Verificar si estamos esperando un comentario
+        cache_key = f"waiting_feedback_comment_{phone_number}"
+        waiting_session_id = cache.get(cache_key)
+        
+        # Obtener la sesión relevante
+        session = None
+        if waiting_session_id:
+            # Estamos esperando un comentario para una sesión específica
+            session = Session.objects.filter(id=waiting_session_id).first()
+            
+            if session:
+                # Estamos procesando un comentario
+                feedback_type = "comment"
+                comment_text = feedback_message
+                response_message = "¡Gracias por tu comentario! Lo tendremos en cuenta para seguir mejorando."
+                
+                # Limpiar el estado de espera
+                cache.delete(cache_key)
+                
+                # Guardar en el modelo Feedback directamente
+                from .services.feedback_service import FeedbackService
+                feedback_service = FeedbackService()
+                feedback_service.process_feedback_response(
+                    session, user, session.company, 
+                    feedback_type, comment=comment_text
+                )
+                
+                # También guardar en la sesión
+                session.feedback_response = feedback_type
+                session.feedback_comment = comment_text
+                session.feedback_received_at = timezone.now()
+                session.save(update_fields=['feedback_response', 'feedback_comment', 'feedback_received_at'])
+                
+                # Enviar agradecimiento
+                from .services.whatsapp_service import WhatsAppService
+                whatsapp_service = WhatsAppService(
+                    api_token=session.company.whatsapp_api_token,
+                    phone_number_id=session.company.whatsapp_phone_number_id
+                )
+                whatsapp_service.send_message(phone_number, response_message)
+                
+                logger.info(f"Comentario de feedback procesado para sesión {session.id}")
+                return
+        
+        # Si no estamos procesando un comentario, buscar la última sesión cerrada
+        if not session:
+            session = Session.objects.filter(
+                user=user,
+                ended_at__isnull=False,
+                feedback_requested=True
+            ).order_by('-ended_at').first()
+        
+        if not session:
+            logger.error(f"No se encontró sesión cerrada reciente para usuario {user.id} al procesar feedback")
+            return
+        
+        # Obtener empresa
+        company = session.company
+        
+        # Determinar tipo de feedback
+        if "👍" in feedback_message or "positive" in feedback_message or "Buena" in feedback_message or "Bueno" in feedback_message:
+            feedback_type = "positive"
+            response_message = "¡Gracias por tu valoración positiva! Nos alegra haber podido ayudarte."
+        elif "👎" in feedback_message or "negative" in feedback_message or "Mejorable" in feedback_message:
+            feedback_type = "negative"
+            response_message = "Gracias por tu sinceridad. Trabajaremos en mejorar nuestra atención."
+        elif "💬" in feedback_message or "comment" in feedback_message or "Comentar" in feedback_message:
+            feedback_type = "comment_requested"
+            response_message = "Agradecemos que quieras dejarnos un comentario. Por favor, escribe tu opinión o sugerencia."
+            
+            # Marcar que estamos esperando un comentario
+            session.feedback_comment_requested = True
+            session.save(update_fields=['feedback_comment_requested'])
+            
+            # Guardar el ID de la sesión en caché
+            cache.set(cache_key, session.id, 60*30)  # 30 minutos para responder
+        else:
+            feedback_type = "neutral"
+            response_message = "Gracias por tu respuesta. Hemos registrado tu feedback."
+        
+        # Guardar en Session
+        session.feedback_response = feedback_type
+        session.feedback_received_at = timezone.now()
+        session.save()
+        
+        # Guardar en Feedback si no es solicitud de comentario
+        if feedback_type != "comment_requested":
+            from .services.feedback_service import FeedbackService
+            feedback_service = FeedbackService()
+            feedback_service.process_feedback_response(session, user, company, feedback_type)
+        
+        # Enviar respuesta al usuario
+        from .services.whatsapp_service import WhatsAppService
+        whatsapp_service = WhatsAppService(
+            api_token=company.whatsapp_api_token,
+            phone_number_id=company.whatsapp_phone_number_id
+        )
+        whatsapp_service.send_message(phone_number, response_message)
+        
+        logger.info(f"Procesado feedback '{feedback_type}' para sesión {session.id}")
+        
+    except Exception as e:
+        logger.error(f"Error procesando feedback: {e}", exc_info=True)

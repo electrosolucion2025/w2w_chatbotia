@@ -96,90 +96,74 @@ class SessionService:
         """
         Finaliza una sesión y ejecuta análisis de conversación
         """
-        # Finalizar la sesión
-        if not session.ended_at:
+        # Determinar si la sesión ya estaba finalizada antes
+        was_active = not session.ended_at
+        
+        # Finalizar la sesión si aún no lo está
+        if was_active:
             session.ended_at = timezone.now()
             session.save()
             logger.info(f"Sesión {session.id} finalizada")
-            
-        try:
-            # Obtener las credenciales especificas de la empresa
-            company = session.company
-            api_token = company.whatsapp_api_token
-            phone_number_id = company.whatsapp_phone_number_id
-            
-            # Verificar que las credenciales existe
-            if not api_token or not phone_number_id:
-                logger.error(f"Credenciales de WhatsApp no encontradas para la empresa {company.name}")
-                return
-            
-            # Enviar mensaje de despedida al usuario
-            from django.conf import settings
-            from .whatsapp_service import WhatsAppService
-            
-            whatsapp_service = WhatsAppService(
-                api_token=api_token,
-                phone_number_id=phone_number_id,
-            )
-            
-            # Mensaje de despedida
-            farewell_message = (
-                "Parece que ha pasado un tiempo desde tu último mensaje. "
-                "He finalizado esta conversación por inactividad. "
-                "Si necesitas más ayuda, no dudes en escribir de nuevo en cualquier momento. "
-                "¡Gracias por contactar con nosotros!"
-            )
-            
-            # Enviar mensaje de despedida
-            whatsapp_service.send_message(
-                to_phone=session.user.whatsapp_number,
-                message_text=farewell_message,
-            )
-            
-            # Guardar mensaje en la BD
-            from ..models import Message
-            Message.objects.create(
-                session=session,
-                company=session.company,
-                user=session.user,
-                message_text=farewell_message,
-                message_type="text",
-                is_from_user=False,
-            )
-            
-            # Actualizar el estado de la sesión
-            logger.info(f"Enviado mensaje de despedida automático para sesión {session.id}")
-            
-            # Enviar feedback
-            import time
-            time.sleep(2) # Esperar un poco antes de enviar el feedback
-            
+        
+        # SOLO enviar solicitud de feedback si:
+        # 1. La sesión estaba activa antes (se está cerrando ahora)
+        # 2. No se ha enviado un mensaje de despedida previamente
+        if was_active and not session.farewell_message_sent:
             try:
-                # Importar el servicio de feedback
-                from .feedback_service import FeedbackService
-                feedback_service = FeedbackService()
+                # Obtener las credenciales específicas de la empresa
+                company = session.company
+                api_token = company.whatsapp_api_token
+                phone_number_id = company.whatsapp_phone_number_id
                 
-                # Enviar solicitud de feedback	
-                feedback_service.send_feedback_request(
-                    whatsapp_service=whatsapp_service,
-                    phone_number=session.user.whatsapp_number,
-                    session=session
+                # Verificar que las credenciales existen
+                if not api_token or not phone_number_id:
+                    logger.error(f"Credenciales de WhatsApp no encontradas para la empresa {company.name}")
+                    return
+                
+                # Crear WhatsApp service
+                from django.conf import settings
+                from .whatsapp_service import WhatsAppService
+                
+                whatsapp_service = WhatsAppService(
+                    api_token=api_token,
+                    phone_number_id=phone_number_id,
                 )
                 
-                # Actualizar la sesión para indicar que se solicito feedback
-                session.feedback_requested = True
-                session.feedback_requested_at = timezone.now()
-                session.save()
+                # Marcar que ya se envió el mensaje de despedida (aunque no se envíe)
+                session.farewell_message_sent = True
+                session.save(update_fields=['farewell_message_sent'])
                 
-                logger.info(f"Solicitud de feedback enviada a {session.user.whatsapp_number} para sesión {session.id}")
+                # Enviar directamente solicitud de feedback
+                try:
+                    # Importar el servicio de feedback
+                    from .feedback_service import FeedbackService
+                    feedback_service = FeedbackService()
+                    
+                    # Enviar solicitud de feedback
+                    feedback_service.send_feedback_request(
+                        whatsapp_service=whatsapp_service,
+                        phone_number=session.user.whatsapp_number,
+                        session=session
+                    )
+                    
+                    # Actualizar la sesión para indicar que se solicitó feedback
+                    session.feedback_requested = True
+                    session.feedback_requested_at = timezone.now()
+                    session.save(update_fields=['feedback_requested', 'feedback_requested_at'])
+                    
+                    logger.info(f"Solicitud de feedback enviada a {session.user.whatsapp_number} para sesión {session.id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error al enviar solicitud de feedback: {e}")
                 
             except Exception as e:
-                logger.error(f"Error al enviar solicitud de feedback: {e}")
-            
-        except Exception as e:
-            logger.error(f"Error al enviar mensaje de despedida para sesión {session.id}: {e}")
+                logger.error(f"Error al enviar feedback para sesión {session.id}: {e}")
+        elif not was_active:
+            logger.info(f"No se envía feedback para sesión {session.id} porque ya estaba finalizada")
+        elif session.farewell_message_sent:
+            logger.info(f"No se envía feedback para sesión {session.id} porque ya se procesó anteriormente")
         
-        # Ejecutar análisis de la conversación
+        # Ejecutar análisis de la conversación (siempre, independientemente del estado)
         try:
             # Analizar la sesión
             analysis = self.analysis_service.analyze_session(session)
@@ -192,7 +176,7 @@ class SessionService:
                 
         except Exception as e:
             logger.error(f"Error en análisis de sesión {session.id}: {e}")
-    
+        
     def end_session(self, session):
         """
         Finaliza una sesión específica y ejecuta análisis

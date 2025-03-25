@@ -282,10 +282,12 @@ class Feedback(models.Model):
     session = models.OneToOneField(Session, on_delete=models.CASCADE, related_name='feedback')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='feedbacks')
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='feedbacks')
-    rating = models.CharField(max_length=10, choices=[
+    rating = models.CharField(max_length=20, choices=[
         ('positive', 'Positivo'),
         ('negative', 'Negativo'),
-        ('neutral', 'Neutral')
+        ('neutral', 'Neutral'),
+        ('comment', 'Comentario'),
+        ('comment_requested', 'Comentario Solicitado')
     ])
     comment = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
