@@ -1,7 +1,8 @@
 from django.contrib import admin
-from django.urls import reverse
+from django.urls import reverse, path
 from django.utils.html import format_html
 from django.http import HttpResponseRedirect
+from django.contrib import messages
 
 from chatbot.services.conversation_analysis_service import ConversationAnalysisService
 from .models import *
@@ -16,38 +17,124 @@ class CompanyInfoInline(admin.TabularInline):
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    list_display = ('name', 'phone_number', 'active', 'created_at', 'feedback_summary')
-    search_fields = ('name', 'phone_number')
-    list_filter = ('active', 'created_at')
-    inlines = [CompanyInfoInline]
+    list_display = ('logo_thumbnail', 'name', 'tax_id', 'phone_number', 'contact_email', 'active', 'subscription_status')
+    list_filter = ('active', 'business_category', 'city', 'subscription_plan')
+    search_fields = ('name', 'legal_name', 'tax_id', 'phone_number', 'contact_email', 'contact_name')
+    date_hierarchy = 'created_at'
+    actions = ['activate_companies', 'deactivate_companies', 'extend_subscription_month']
     
-    fieldsets = (
+    fieldsets = [
         ("Información Básica", {
-            "fields": ("name", "active")
+            "fields": (
+                ("name", "legal_name"),
+                "tax_id",
+                "active",
+                "logo",
+            )
         }),
-        ("WhatsApp API", {
-            "fields": ("whatsapp_phone_number_id", "phone_number", "whatsapp_api_token")
+        ("Configuración WhatsApp", {
+            "fields": (
+                "phone_number",
+                "whatsapp_phone_number_id",
+                "whatsapp_api_token",
+            ),
+            "description": "Configuración para la API de WhatsApp",
         }),
-        ("Estadísticas de Feedback", {
-            "fields": ("feedback_detailed_stats",)
-        })
-    )
+        ("Contacto", {
+            "fields": (
+                "contact_name",
+                "contact_email",
+                "contact_phone",
+            ),
+        }),
+        ("Dirección", {
+            "fields": (
+                "address_line1",
+                "address_line2",
+                ("city", "postal_code"),
+                ("state", "country"),
+            ),
+        }),
+        ("Presencia Online", {
+            "fields": (
+                "website",
+                ("facebook", "instagram"),
+                ("twitter", "linkedin"),
+            ),
+            "classes": ("collapse",),
+        }),
+        ("Información de Negocio", {
+            "fields": (
+                "business_category",
+                "business_description",
+                ("founding_year", "employee_count"),
+            ),
+            "classes": ("collapse",),
+        }),
+        ("Suscripción", {
+            "fields": (
+                "subscription_plan",
+                "subscription_end_date",
+            ),
+            "description": "Detalles del plan contratado",
+        }),
+    ]
     
-    readonly_fields = ('feedback_detailed_stats',)
+    # Solo mostrar estadísticas en modo edición
+    def get_readonly_fields(self, request, obj=None):
+        if not obj:  # En modo creación
+            return ['created_at', 'updated_at']
+        # En modo edición
+        return ['created_at', 'updated_at', 'feedback_summary', 'feedback_detailed_stats']
     
+    # Mostrar la imagen en miniatura en la lista
+    def logo_thumbnail(self, obj):
+        if obj.logo:
+            return format_html('<img src="{}" width="25" height="25" style="border-radius:50%" />', obj.logo.url)
+        # Usar format_html también para cuando no hay logo, mostrando un marcador de posición visual
+        return format_html('<div style="width:25px; height:25px; border-radius:50%; background:#eee; display:flex; align-items:center; justify-content:center; font-size:20px; color:#aaa;">?</div>')
+    logo_thumbnail.short_description = ""
+    
+    # Mostrar estado de suscripción con colores
+    def subscription_status(self, obj):
+        if not obj.subscription_end_date:
+            return format_html('<span style="color: #999;">Sin fecha de fin</span>')
+        
+        from datetime import date
+        today = date.today()
+        days_left = (obj.subscription_end_date - today).days
+        
+        if days_left < 0:
+            return format_html(
+                '<span style="color: #e74c3c; font-weight: bold;">Expirado</span> '
+                '<span style="color: #777;">({} días)</span>', abs(days_left)
+            )
+        elif days_left <= 7:
+            return format_html(
+                '<span style="color: #e67e22; font-weight: bold;">Por expirar</span> '
+                '<span style="color: #777;">({} días)</span>', days_left
+            )
+        else:
+            return format_html(
+                '<span style="color: #2ecc71;">Activa</span> '
+                '<span style="color: #777;">({} días)</span>', days_left
+            )
+    subscription_status.short_description = "Estado Suscripción"
+    
+    # Funciones para el feedback
     def feedback_summary(self, obj):
         """Muestra un resumen del feedback de la empresa"""
+        # Verificar que la empresa existe y tiene un ID
         if not obj or not obj.pk:
             return "Nueva empresa - Guardar primero para ver estadísticas"
-        
-        # Obtener estadísticas de feedback
+            
         stats = feedback_service.get_cached_feedback_stats(obj, days=30)
         
         if "error" in stats:
             return "Error al cargar stats"
         
         if stats["total"] == 0:
-            return "Sin feedback"
+            return "Sin feedback en los últimos 30 días"
             
         # Crear barras de progreso para visualización
         positive_bar = self._create_progress_bar(
@@ -62,9 +149,10 @@ class CompanyAdmin(admin.ModelAdmin):
             f"{stats['negative']} ({stats['negative_percent']}%)"
         )
         
+        # Mostrar comentarios en lugar de neutral
         comment_bar = self._create_progress_bar(
             stats["comment_percent"], 
-            "#3498db", 
+            "#3498db",  # Azul para comentarios
             f"{stats['comment']} ({stats['comment_percent']}%)"
         )
         
@@ -81,95 +169,111 @@ class CompanyAdmin(admin.ModelAdmin):
             negative_bar,
             comment_bar
         )
+    feedback_summary.short_description = "Feedback (30 días)"
     
-    def _create_progress_bar(self, percentage, color, text):
-        """Crea una barra de progreso HTML"""
+    def _create_progress_bar(self, percentage, color, text=""):
+        """Crea una barra de progreso visual con HTML/CSS"""
         return format_html(
-            '<div style="display: flex; align-items: center; gap: 5px;">'
-            '<div style="flex-grow: 1; background-color: #eee; border-radius: 3px; height: 10px;">'
-            '<div style="width: {}%; background-color: {}; height: 100%; border-radius: 3px;"></div>'
+            '<div style="display:flex; align-items: center;">'
+            '<div style="width: 150px; background-color: #f0f0f0; height: 10px; border-radius: 5px; margin-right: 10px;">'
+            '<div style="width: {}%; background-color: {}; height: 100%; border-radius: 5px;"></div>'
             '</div>'
-            '<div style="min-width: 80px;">{}</div>'
+            '<div>{}</div>'
             '</div>',
             percentage, color, text
         )
-        
+    
     def feedback_detailed_stats(self, obj):
         """Muestra estadísticas detalladas de feedback"""
         # Verificar que el objeto exista y tenga ID
         if not obj or not obj.pk:
             return "Las estadísticas de feedback estarán disponibles después de guardar."
-        
+    
         # Añadir botón para refrescar estadísticas
         refresh_url = reverse('admin:company_refresh_stats', args=[obj.pk])
         refresh_button = f'<a href="{refresh_url}" class="button">Actualizar estadísticas</a>'
         
         # Obtener estadísticas para diferentes períodos
-        last_7 = feedback_service.get_cached_feedback_stats(obj, days=7)
-        last_30 = feedback_service.get_cached_feedback_stats(obj, days=30)
-        last_90 = feedback_service.get_cached_feedback_stats(obj, days=90)
+        stats_7 = feedback_service.get_cached_feedback_stats(obj, days=7)
+        stats_30 = feedback_service.get_cached_feedback_stats(obj, days=30)
+        stats_90 = feedback_service.get_cached_feedback_stats(obj, days=90)
         
-        # Crear gráficos con datos de diferentes períodos
-        html = '<div style="max-width: 600px;">'
-        html += f'<div style="margin-bottom: 10px;">{refresh_button}</div>'
+        # Crear tabla HTML
+        html = f"""
+        <div style="margin-bottom: 20px;">
+            <div style="margin-bottom: 10px;">{refresh_button}</div>
+            <table class="table" style="border-collapse: collapse; width: 100%;">
+                <thead>
+                    <tr style="background-color: #f8f9fa;">
+                        <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6;">Período</th>
+                        <th style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">Total</th>
+                        <th style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">Positivos</th>
+                        <th style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">Negativos</th>
+                        <th style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">Comentarios</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {self._create_stats_row("7 días", stats_7)}
+                    {self._create_stats_row("30 días", stats_30)}
+                    {self._create_stats_row("90 días", stats_90)}
+                </tbody>
+            </table>
+        </div>
+        """
         
-        html += '<h3>Resumen de Feedback</h3>'
-        html += '<table style="width: 100%; border-collapse: collapse;">'
-        html += '<tr style="background-color: #000;"><th>Período</th><th>Total</th><th>👍 Positivos</th><th>👎 Negativos</th><th>💬 Con comentarios</th></tr>'
-        
-        # Últimos 7 días
-        html += self._create_stats_row('Últimos 7 días', last_7)
-        # Últimos 30 días
-        html += self._create_stats_row('Últimos 30 días', last_30)
-        # Últimos 90 días
-        html += self._create_stats_row('Últimos 90 días', last_90)
-        
-        html += '</table>'
-        
-        # Agregar visualización de últimos comentarios
+        # Añadir comentarios recientes
         html += self._get_recent_comments_html(obj)
         
-        html += '</div>'
-        
         return format_html(html)
+    feedback_detailed_stats.short_description = "Estadísticas de Feedback"
     
     def _create_stats_row(self, label, stats):
         """Crea una fila de tabla con estadísticas"""
         if stats.get("total", 0) == 0:
-            return f'<tr><td>{label}</td><td colspan="4" style="text-align: center;">Sin datos</td></tr>'
+            return f'<tr><td>{label}</td><td colspan="4" style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">Sin datos</td></tr>'
         
         return f'''
             <tr>
-                <td>{label}</td>
-                <td style="text-align: center;">{stats["total"]}</td>
-                <td style="text-align: center;">{stats["positive"]} ({stats["positive_percent"]}%)</td>
-                <td style="text-align: center;">{stats["negative"]} ({stats["negative_percent"]}%)</td>
-                <td style="text-align: center;">{stats["comment"]} ({stats["comment_percent"]}%)</td>
+                <td style="padding: 8px; border: 1px solid #dee2e6;">{label}</td>
+                <td style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">{stats["total"]}</td>
+                <td style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">{stats["positive"]} ({stats["positive_percent"]}%)</td>
+                <td style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">{stats["negative"]} ({stats["negative_percent"]}%)</td>
+                <td style="text-align: center; padding: 8px; border: 1px solid #dee2e6;">{stats["comment"]} ({stats["comment_percent"]}%)</td>
             </tr>
         '''
     
     def _get_recent_comments_html(self, obj):
         """Obtiene HTML con comentarios recientes"""
-        # Obtener los 5 comentarios más recientes
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Comentarios de los últimos 30 días
+        thirty_days_ago = timezone.now() - timedelta(days=30)
         recent_comments = Feedback.objects.filter(
             company=obj, 
+            created_at__gte=thirty_days_ago,
             comment__isnull=False
-        ).exclude(
-            comment=""
-        ).order_by(
-            '-created_at'
-        )[:5]
+        ).exclude(comment='').order_by('-created_at')[:5]
         
         if not recent_comments:
-            return '<p><em>No hay comentarios recientes.</em></p>'
-        
-        html = '<h3>Comentarios Recientes</h3>'
-        html += '<div style="max-height: 300px; overflow-y: auto;">'
+            return '<p>No hay comentarios recientes.</p>'
+            
+        html = '<div><h3>Comentarios recientes</h3>'
         
         for feedback in recent_comments:
-            rating_emoji = "👍" if feedback.rating == "positive" else "👎" if feedback.rating == "negative" else "🗣️"
-            date_str = feedback.created_at.strftime("%d/%m/%Y %H:%M")
+            # Obtener emoji según el rating
+            if feedback.rating == 'positive':
+                rating_emoji = '👍'
+            elif feedback.rating == 'negative':
+                rating_emoji = '👎'
+            else:
+                rating_emoji = '💬'
+                
+            # Nombre del usuario
             user_name = feedback.user.name or feedback.user.whatsapp_number
+            
+            # Formatear fecha
+            date_str = feedback.created_at.strftime('%d/%m/%Y %H:%M')
             
             html += f'''
                 <div style="margin-bottom: 10px; padding: 10px; border-left: 4px solid #ddd;">
@@ -181,12 +285,8 @@ class CompanyAdmin(admin.ModelAdmin):
         html += '</div>'
         return html
     
-    feedback_summary.short_description = "Feedback (30 días)"
-    feedback_summary.allow_tags = True
-    feedback_detailed_stats.short_description = "Estadísticas de Feedback"
-    
+    # URLs y vistas personalizadas
     def get_urls(self):
-        from django.urls import path
         urls = super().get_urls()
         custom_urls = [
             path(
@@ -211,30 +311,54 @@ class CompanyAdmin(admin.ModelAdmin):
             cache.delete(key)
             
         # Redireccionar de vuelta a la página de la empresa
-        from django.contrib import messages
         messages.success(request, "Estadísticas de feedback actualizadas correctamente")
-        return HttpResponseRedirect(f"../")
+        return HttpResponseRedirect("../")
     
     def change_view(self, request, object_id, form_url='', extra_context=None):
         """Personalizar la vista de edición para agregar botones personalizados"""
         extra_context = extra_context or {}
-        
-        # Solo agregar el botón si la empresa existe (tiene object_id)
-        if object_id:
+        if object_id:  # Solo si estamos editando
             refresh_url = reverse('admin:company_refresh_stats', args=[object_id])
             extra_context['refresh_stats_url'] = refresh_url
             
         return super().change_view(
             request, object_id, form_url, extra_context=extra_context
         )
-    
+        
     def add_view(self, request, form_url='', extra_context=None):
-        """Personalizar la vista de creación"""
-        # No agregar el botón en la vista de creación
+        """Vista personalizada para creación"""
         extra_context = extra_context or {}
+        # No agregar botones específicos de edición
         return super().add_view(
             request, form_url, extra_context=extra_context
         )
+    
+    # Acciones en masa
+    def activate_companies(self, request, queryset):
+        """Activa las empresas seleccionadas"""
+        updated = queryset.update(active=True)
+        self.message_user(request, f'Se activaron {updated} empresas correctamente.')
+    activate_companies.short_description = "Activar empresas seleccionadas"
+    
+    def deactivate_companies(self, request, queryset):
+        """Desactiva las empresas seleccionadas"""
+        updated = queryset.update(active=False)
+        self.message_user(request, f'Se desactivaron {updated} empresas correctamente.')
+    deactivate_companies.short_description = "Desactivar empresas seleccionadas"
+    
+    def extend_subscription_month(self, request, queryset):
+        """Extiende la suscripción por un mes"""
+        from datetime import date, timedelta
+        count = 0
+        for company in queryset:
+            if company.subscription_end_date:
+                company.subscription_end_date = company.subscription_end_date + timedelta(days=30)
+            else:
+                company.subscription_end_date = date.today() + timedelta(days=30)
+            company.save()
+            count += 1
+        self.message_user(request, f'Se extendió la suscripción de {count} empresas por 30 días.')
+    extend_subscription_month.short_description = "Extender suscripción por 1 mes"
 
 class UserCompanyInteractionInline(admin.TabularInline):
     model = UserCompanyInteraction

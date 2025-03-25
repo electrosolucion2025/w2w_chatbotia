@@ -5,13 +5,52 @@ import json
 
 class Company(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=255)
+    name = models.CharField(max_length=100, verbose_name="Nombre de la empresa")
+    
+    # Configuración WhatsApp
     phone_number = models.CharField(max_length=20, unique=True)
     whatsapp_api_token = models.CharField(max_length=500, blank=True, null=True)
     whatsapp_phone_number_id = models.CharField(max_length=100, blank=True, null=True)
-    active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Información fiscal y legal
+    tax_id = models.CharField(max_length=20, blank=True, null=True, verbose_name="NIF/CIF")
+    legal_name = models.CharField(max_length=150, blank=True, null=True, verbose_name="Razón social")
+    
+    # Contacto empresa
+    contact_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="Persona de contacto")
+    contact_email = models.EmailField(blank=True, null=True, verbose_name="Email de contacto")
+    contact_phone = models.CharField(max_length=20, blank=True, null=True, verbose_name="Teléfono de contacto")
+    
+    # Dirección
+    address_line1 = models.CharField(max_length=150, blank=True, null=True, verbose_name="Dirección")
+    address_line2 = models.CharField(max_length=150, blank=True, null=True, verbose_name="Complemento dirección")
+    city = models.CharField(max_length=100, blank=True, null=True, verbose_name="Ciudad")
+    postal_code = models.CharField(max_length=10, blank=True, null=True, verbose_name="Código postal")
+    state = models.CharField(max_length=100, blank=True, null=True, verbose_name="Provincia")
+    country = models.CharField(max_length=100, blank=True, null=True, verbose_name="País", default="España")
+    
+    # Redes sociales y web
+    website = models.URLField(blank=True, null=True, verbose_name="Sitio web")
+    facebook = models.URLField(blank=True, null=True, verbose_name="Facebook")
+    instagram = models.URLField(blank=True, null=True, verbose_name="Instagram")
+    twitter = models.URLField(blank=True, null=True, verbose_name="Twitter")
+    linkedin = models.URLField(blank=True, null=True, verbose_name="LinkedIn")
+    
+    # Información de negocio
+    business_category = models.CharField(max_length=100, blank=True, null=True, verbose_name="Categoría de negocio")
+    business_description = models.TextField(blank=True, null=True, verbose_name="Descripción del negocio")
+    founding_year = models.PositiveIntegerField(blank=True, null=True, verbose_name="Año de fundación")
+    employee_count = models.PositiveIntegerField(blank=True, null=True, verbose_name="Número de empleados")
+    
+    # Campos administrativos
+    active = models.BooleanField(default=True, verbose_name="Activa")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Fecha de creación")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Última actualización")
+    subscription_plan = models.CharField(max_length=50, blank=True, null=True, verbose_name="Plan de suscripción", default="standard")
+    subscription_end_date = models.DateField(blank=True, null=True, verbose_name="Fecha fin suscripción")
+    
+    # Logo e imágenes
+    logo = models.ImageField(upload_to='company_logos/', blank=True, null=True, verbose_name="Logo")
     
     def __str__(self):
         return self.name
@@ -19,6 +58,14 @@ class Company(models.Model):
     class Meta:
         verbose_name = "Company"
         verbose_name_plural = "Companies"
+        ordering = ['name']
+        
+    def save(self, *args, **kwargs):
+        # Si es una nueva compañía sin fecha de suscripción, establecer por defecto a 1 mes
+        if not self.pk and not self.subscription_end_date:
+            from datetime import date, timedelta
+            self.subscription_end_date = date.today() + timedelta(days=30)
+        super().save(*args, **kwargs)
 
 class CompanyInfo(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
