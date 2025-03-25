@@ -325,7 +325,7 @@ class SessionAdmin(admin.ModelAdmin):
         elif intent == 'consulta_informacion':
             html += "<p style='background-color: #f2f2f2; padding: 5px;'>Consulta de Información</p>"
         elif intent == 'queja':
-            html += "<p style='background-color: #fff0f0; padding: 5px;'>Queja o Reclamación</p>"
+            html += "<p style='background-color: #000000; padding: 5px;'>Queja o Reclamación</p>"
         else:
             html += f"<p style='background-color: #f2f2f2; padding: 5px;'>{intent}</p>"
         html += "</div>"
