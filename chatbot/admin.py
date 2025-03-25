@@ -58,10 +58,10 @@ class CompanyAdmin(admin.ModelAdmin):
             f"{stats['negative']} ({stats['negative_percent']}%)"
         )
         
-        neutral_bar = self._create_progress_bar(
-            stats["neutral_percent"], 
-            "gray", 
-            f"{stats['neutral']} ({stats['neutral_percent']}%)"
+        comment_bar = self._create_progress_bar(
+            stats["comment_percent"], 
+            "#3498db", 
+            f"{stats['comment']} ({stats['comment_percent']}%)"
         )
         
         # Formatear el resultado con HTML
@@ -70,12 +70,12 @@ class CompanyAdmin(admin.ModelAdmin):
             'Total: <strong>{}</strong><br>'
             'Positivos: {}<br>'
             'Negativos: {}<br>'
-            'Neutral: {}'
+            'Comentarios: {}'
             '</div>',
             stats["total"],
             positive_bar,
             negative_bar,
-            neutral_bar
+            comment_bar
         )
     
     def _create_progress_bar(self, percentage, color, text):
