@@ -139,7 +139,8 @@ class Session(models.Model):
     started_at = models.DateTimeField(auto_now_add=True)
     last_activity = models.DateTimeField(auto_now=True)
     ended_at = models.DateTimeField(null=True, blank=True)
-    feedback_requested = models.BooleanField(default=False)
+    feedback_requested = models.BooleanField(default=False, help_text="Indica si se ha solicitado feedback al usuario")
+    feedback_requested_at = models.DateTimeField(null=True, blank=True, help_text="Fecha y hora en que se solicitó el feedback")
     analysis_results_json = models.TextField(
         blank=True, 
         null=True,
