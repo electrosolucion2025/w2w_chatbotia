@@ -8,7 +8,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--minutes',
             type=int,
-            default=60,
+            default=5,
             help='Minutos de inactividad antes de cerrar una sesión'
         )
 

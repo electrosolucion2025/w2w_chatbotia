@@ -60,7 +60,7 @@ class OpenAIService:
             response = openai.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.7,
+                temperature=0.5,
             )
             
             # Extract the assistant's reply from the response
@@ -114,9 +114,22 @@ class OpenAIService:
         prompt += "3. Si la información por la que te preguntan es extensa, haz una lista primero y solicita que te pregunten por lo que quieran.\n"
         prompt += "4. Utiliza un tono amable y profesional.\n"
         prompt += "5. Si desconoces la respuesta a una pregunta específica, indícalo amablemente y ofrece poner al cliente en contacto con un asesor.\n"
-        prompt += "6. Si el cliente desea que se le ponga en contacto con un asesor, pidele su nombre. Tambien puedes preguntarle si tiene algun horario especifico o forma concreta de contactar con él.\n"
+        
+        # NUEVO: Mejora de la detección de solicitud de contacto y cierre de sesión
+        prompt += "6. Si el cliente solicita contacto con un asesor, agente o persona real, detecta esta intención y sigue estos pasos:\n"
+        prompt += "   a) Solicita su nombre para el registro\n" 
+        prompt += "   b) Pregunta si tiene alguna preferencia de horario o forma de contacto\n"
+        prompt += "   c) Recopila toda la información relevante sobre su consulta específica\n"
+        prompt += "   d) Al final, SIEMPRE pregúntale: '¿Hay algo más en lo que pueda ayudarte ahora, o prefieres finalizar la conversación y esperar el contacto del asesor?'\n"
+        
         prompt += "7. Posteriormente informale que el agente se pondra en contacto con él y muestrale los datos de contacto por si es urgente.\n"
         prompt += "8. Cuando el usuario indique que quiere terminar la conversación o se despida, despídete cordialmente y agradece por utilizar el servicio.\n"
+        
+        # NUEVO: Mejora para manejar el cierre de sesión
+        prompt += "8. Cuando detectes intenciones de despedida o cierre de la conversación:\n"
+        prompt += "   a) Si hay ambigüedad sobre si el usuario ha terminado, pregunta explícitamente: '¿Deseas finalizar nuestra conversación o tienes alguna otra consulta?'\n"
+        prompt += "   b) Si el usuario no ha interactuado por un tiempo, pregunta: '¿Sigues ahí? ¿Puedo ayudarte con algo más o prefieres que finalicemos la conversación?'\n"
+        
         prompt += "9. Cuando finalice la sesion di: Chat finalizado.\n"
         
         # Add the list of available sections for easy reference

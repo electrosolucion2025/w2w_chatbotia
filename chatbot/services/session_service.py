@@ -65,7 +65,7 @@ class SessionService:
             logger.error(f"Error al finalizar sesiones: {e}")
             return False
     
-    def end_inactive_sessions(self, minutes=60):
+    def end_inactive_sessions(self, minutes=5):
         """
         Finalizar sesiones inactivas después de un periodo de tiempo
         """
@@ -97,7 +97,10 @@ class SessionService:
         Finaliza una sesión y ejecuta análisis de conversación
         """
         # Finalizar la sesión
-        session.end_session()
+        if not session.ended_at:
+            session.ended_at = timezone.now()
+            session.save()
+            logger.info(f"Sesión {session.id} finalizada")
         
         # Ejecutar análisis de la conversación
         try:
