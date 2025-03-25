@@ -110,6 +110,7 @@ class OpenAIService:
         
         # Add specific instructions about mentioning available sections
         prompt += "\n\n--- INSTRUCCIONES ESPECIALES ---\n"
+        prompt += "0. Utiliza emojis para hacer la conversación más amena y amigable.\n"
         prompt += "1. En tu primer mensaje a un nuevo usuario, preséntate brevemente y menciona las categorías en formato lista de información disponibles para orientarle.\n"
         prompt += "2. Sé conciso pero completo en tus respuestas.\n"
         prompt += "3. Si la información por la que te preguntan es extensa, haz una lista primero y solicita que te pregunten por lo que quieran.\n"
