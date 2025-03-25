@@ -563,7 +563,7 @@ class WhatsAppService:
                 header_text="Idioma / Language",
                 body_text=body_text,
                 buttons=buttons,
-                footer_text="Whats2Want Chatbot"
+                footer_text="• Powered by Whats2Want Global S.L. •"
             )
             
         except Exception as e:
