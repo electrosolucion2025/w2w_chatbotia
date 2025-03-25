@@ -93,7 +93,7 @@ class OpenAIService:
         # Add a general instruction
         prompt += "Tu objetivo es ayudar a los clientes respondiendo sus preguntas de manera amable y profesional. "
         prompt += "Utiliza la siguiente información para responder consultas específicas. "
-        prompt += "Traduce tambien los titulos de las secciones al idioma indicado en el codigo ISO / lenguage.\n\n"
+        prompt += "Traduce tanto los titulos como las secciones de los mismos al idioma indicado en el codigo ISO / lenguage.\n\n"
         
         # Add company information sections
         sections = []
@@ -111,12 +111,13 @@ class OpenAIService:
         prompt += "\n\n--- INSTRUCCIONES ESPECIALES ---\n"
         prompt += "1. En tu primer mensaje a un nuevo usuario, preséntate brevemente y menciona las categorías en formato lista de información disponibles para orientarle.\n"
         prompt += "2. Sé conciso pero completo en tus respuestas.\n"
-        prompt += "3. Utiliza un tono amable y profesional.\n"
-        prompt += "4. Si desconoces la respuesta a una pregunta específica, indícalo amablemente y ofrece poner al cliente en contacto con un asesor humano.\n"
-        prompt += "5. Si el cliente desea que se le ponga en contacto con un asesor humano, pidele su nombre. Tambien puedes preguntarle si tiene algun horario especifico o forma concreta de contactar con él.\n"
-        prompt += "6. Posteriormente informale que el agente se pondra en contacto con él y muestrale los datos de contacto por si es urgente.\n"
-        prompt += "7. Cuando el usuario indique que quiere terminar la conversación o se despida, despídete cordialmente y agradece por utilizar el servicio.\n"
-        prompt += "8. Cuando finalice la sesion di: Chat finalizado.\n"
+        prompt += "3. Si la información por la que te preguntan es extensa, haz una lista primero y solicita que te pregunten por lo que quieran.\n"
+        prompt += "4. Utiliza un tono amable y profesional.\n"
+        prompt += "5. Si desconoces la respuesta a una pregunta específica, indícalo amablemente y ofrece poner al cliente en contacto con un asesor.\n"
+        prompt += "6. Si el cliente desea que se le ponga en contacto con un asesor, pidele su nombre. Tambien puedes preguntarle si tiene algun horario especifico o forma concreta de contactar con él.\n"
+        prompt += "7. Posteriormente informale que el agente se pondra en contacto con él y muestrale los datos de contacto por si es urgente.\n"
+        prompt += "8. Cuando el usuario indique que quiere terminar la conversación o se despida, despídete cordialmente y agradece por utilizar el servicio.\n"
+        prompt += "9. Cuando finalice la sesion di: Chat finalizado.\n"
         
         # Add the list of available sections for easy reference
         if sections:
