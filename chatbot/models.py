@@ -232,7 +232,6 @@ class Session(models.Model):
         verbose_name = "Session"
         verbose_name_plural = "Sessions"
 
-
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='messages')
@@ -271,7 +270,6 @@ class Message(models.Model):
         verbose_name_plural = "Messages"
         ordering = ['created_at']
         
-# Añadir la función audio_file_path según la migración 0011
 def audio_file_path(instance, filename):
     """Genera la ruta para guardar el archivo de audio"""
     # Guardar en estructura: media/audios/[company_id]/[date]/[filename]
@@ -378,6 +376,114 @@ class PolicyAcceptance(models.Model):
         verbose_name = "Policy Acceptance"
         verbose_name_plural = "Policy Acceptances"
         ordering = ['-accepted_at']
+
+class OpenAIUsageRecord(models.Model):
+    """
+    Modelo para registrar detalladamente el uso de la API de OpenAI por empresa
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey('Company', on_delete=models.CASCADE, related_name='openai_usage_records')
+    session = models.ForeignKey('Session', on_delete=models.SET_NULL, null=True, blank=True, related_name='openai_usages')
+    
+    # Detalles de la solicitud
+    model = models.CharField(max_length=50, default='gpt-4o-mini')
+    
+    # Métricas de uso
+    tokens_input = models.IntegerField(default=0, verbose_name="Tokens de entrada")
+    tokens_output = models.IntegerField(default=0, verbose_name="Tokens de salida")
+    tokens_total = models.IntegerField(default=0, verbose_name="Total de tokens")
+    cached_request = models.BooleanField(default=False, verbose_name="Solicitud cacheada")
+    
+    # Costes según especificaciones GPT-4o-mini
+    # Input: $0.15/M tokens, Cached Input: $0.075/M tokens, Output: $0.60/M tokens
+    cost_input = models.DecimalField(max_digits=10, decimal_places=6, default=0, verbose_name="Coste de entrada ($)")
+    cost_output = models.DecimalField(max_digits=10, decimal_places=6, default=0, verbose_name="Coste de salida ($)")
+    cost_total = models.DecimalField(max_digits=10, decimal_places=6, default=0, verbose_name="Coste total ($)")
+    
+    # Metadatos
+    timestamp = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Registro de uso de OpenAI"
+        verbose_name_plural = "Registros de uso de OpenAI"
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['company', 'timestamp']),
+            models.Index(fields=['timestamp']),
+        ]
+    
+    def __str__(self):
+        return f"{self.company.name} - {self.timestamp.strftime('%d/%m/%Y %H:%M')} - {self.tokens_total} tokens"
+    
+    def save(self, *args, **kwargs):
+        """Calcular costos antes de guardar"""
+        from decimal import Decimal
+        
+        # Seleccionar tasas según el modelo
+        if self.model == 'gpt-4o-mini':
+            # GPT-4o-mini prices (March 2025)
+            input_rate = Decimal('0.15') / Decimal('1000000')  # $0.15 per 1M tokens
+            output_rate = Decimal('0.60') / Decimal('1000000') # $0.60 per 1M tokens
+        elif self.model == 'gpt-4':
+            # GPT-4 prices
+            input_rate = Decimal('10.0') / Decimal('1000000')  
+            output_rate = Decimal('30.0') / Decimal('1000000') 
+        elif self.model == 'gpt-4o':
+            # GPT-4o prices
+            input_rate = Decimal('5.0') / Decimal('1000000')   
+            output_rate = Decimal('15.0') / Decimal('1000000') 
+        else:
+            # Default/fallback prices
+            input_rate = Decimal('0.15') / Decimal('1000000')  
+            output_rate = Decimal('0.60') / Decimal('1000000') 
+        
+        # Si es una solicitud cacheada, descuento del 50%
+        if self.cached_request:
+            input_rate = input_rate * Decimal('0.5')
+            output_rate = output_rate * Decimal('0.5')
+            
+        # Calcular costos
+        self.cost_input = (Decimal(self.tokens_input) * input_rate).quantize(Decimal('0.000001'))
+        self.cost_output = (Decimal(self.tokens_output) * output_rate).quantize(Decimal('0.000001'))
+        self.cost_total = self.cost_input + self.cost_output
+        
+        super().save(*args, **kwargs)
+
+class OpenAIMonthlySummary(models.Model):
+    """
+    Resumen mensual del uso de OpenAI por empresa
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey('Company', on_delete=models.CASCADE, related_name='openai_monthly_summaries')
+    
+    # Periodo
+    year = models.IntegerField(verbose_name="Año")
+    month = models.IntegerField(verbose_name="Mes")  # 1-12
+    
+    # Totales
+    total_requests = models.IntegerField(default=0, verbose_name="Total de solicitudes")
+    total_tokens_input = models.IntegerField(default=0, verbose_name="Total tokens de entrada")
+    total_tokens_output = models.IntegerField(default=0, verbose_name="Total tokens de salida")
+    total_tokens = models.IntegerField(default=0, verbose_name="Total de tokens")
+    
+    # Costes
+    total_cost_input = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Coste total entrada ($)")
+    total_cost_output = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Coste total salida ($)")
+    total_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Coste total ($)")
+    
+    # Metadatos
+    last_updated = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Resumen mensual de OpenAI"
+        verbose_name_plural = "Resúmenes mensuales de OpenAI"
+        ordering = ['-year', '-month']
+        unique_together = ['company', 'year', 'month']
+    
+    def __str__(self):
+        return f"{self.company.name} - {self.month}/{self.year} - ${self.total_cost}"
 
 class LeadStatistics(Session):
     class Meta:

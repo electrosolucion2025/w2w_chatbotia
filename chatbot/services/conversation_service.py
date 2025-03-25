@@ -31,7 +31,7 @@ class ConversationService:
             conversation = conversation[-self.max_context_length:]
             self.conversations[user_id] = conversation
     
-    def generate_response(self, user_id, message, company_info=None, language_code='es', is_first_message=False):
+    def generate_response(self, user_id, message, company_info=None, language_code='es', is_first_message=False, company=None, session=None):
         """
         Genera una respuesta para el mensaje del usuario
         
@@ -64,6 +64,8 @@ class ConversationService:
                 company_info=company_info,
                 is_first_message=is_first_message,
                 language_code=language_code,  # Pasar el idioma especificado
+                company=company,
+                session=session
             )
             
             # Añadir respuesta a la conversación

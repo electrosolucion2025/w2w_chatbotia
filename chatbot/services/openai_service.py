@@ -1,6 +1,7 @@
 import logging
 import openai
 from django.conf import settings
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,8 @@ class OpenAIService:
         self.model = settings.OPENAI_MODEL
         openai.api_key = self.api_key
         
-    def generate_response(self, message, context=None, company_info=None, is_first_message=False, language_code='es'):
+    def generate_response(self, message, context=None, company_info=None, is_first_message=False, 
+                         language_code='es', company=None, session=None):
         """
         Generate a response using OpenAI
         
@@ -21,6 +23,9 @@ class OpenAIService:
             context (list): Previous conversation messages (optional)
             company_info (dict): Information about the company (optional)
             is_first_message (bool): Whether this is the user's first message
+            language_code (str): Language code for the response
+            company (Company): The company object for tracking usage
+            session (Session): The session object for tracking usage
             
         Returns:
             str: The generated response
@@ -47,28 +52,133 @@ class OpenAIService:
             if context:
                 for msg in context:
                     messages.append(msg)
-            
-            # Add the user's message
-            messages.append(
-                {
-                    "role": "user",
-                    "content": message
-                }
-            )
+            else:
+                # If no context, just add the user message
+                messages.append({"role": "user", "content": message})
             
             # Call the OpenAI API
-            response = openai.chat.completions.create(
+            from openai import OpenAI
+            client = OpenAI(api_key=self.api_key)
+            response = client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.5,
+                temperature=0.7
             )
             
-            # Extract the assistant's reply from the response
-            return response.choices[0].message.content.strip()
+            # Extract the text response
+            result = response.choices[0].message.content
+            
+            logger.info(f"DEBUG - OpenAI response object: {type(response)}")
+            logger.info(f"DEBUG - OpenAI response dir: {dir(response)}")
+            logger.info(f"DEBUG - OpenAI response attrs: id={response.id}, model={response.model}")
+            
+            logger.info(f"DEBUG - Verificando parámetro company: {company}")
+            
+            # AÑADIR ESTO: Registrar uso de la API si hay una empresa asociada
+            if company:
+                try:
+                    logger.info(f"DEBUG - Intentando acceder a response.usage...")
+                    
+                    # MÉTODOS PARA EXTRAER USO
+                    usage_data = None
+                    
+                    # 1. Intentar la nueva estructura mediante model_dump (APIs más nuevas)
+                    try:
+                        if hasattr(response, 'model_dump'):
+                            response_dict = response.model_dump()
+                            if isinstance(response_dict, dict) and 'usage' in response_dict:
+                                usage = response_dict['usage']
+                                usage_data = {
+                                    'prompt_tokens': usage.get('prompt_tokens', 0),
+                                    'completion_tokens': usage.get('completion_tokens', 0),
+                                    'total_tokens': usage.get('total_tokens', 0)
+                                }
+                                logger.info(f"DEBUG - Tokens encontrados con model_dump: {usage_data}")
+                    except Exception as e:
+                        logger.error(f"Error con model_dump: {e}")
+                        
+                    # 2. Acceso directo a usage como propiedad
+                    if not usage_data:
+                        try:
+                            if hasattr(response, 'usage'):
+                                usage = response.usage
+                                if hasattr(usage, 'prompt_tokens'):
+                                    usage_data = {
+                                        'prompt_tokens': usage.prompt_tokens,
+                                        'completion_tokens': usage.completion_tokens,
+                                        'total_tokens': usage.total_tokens
+                                    }
+                                    logger.info(f"DEBUG - Tokens encontrados con acceso directo: {usage_data}")
+                        except Exception as e:
+                            logger.error(f"Error con acceso directo: {e}")
+                            
+                    # 3. Método de diccionario usando to_dict o __dict__
+                    if not usage_data:
+                        try:
+                            dict_method = getattr(response, 'to_dict', None) or (lambda: response.__dict__)
+                            response_dict = dict_method()
+                            if 'usage' in response_dict:
+                                usage = response_dict['usage']
+                                usage_data = {
+                                    'prompt_tokens': usage.get('prompt_tokens', 0),
+                                    'completion_tokens': usage.get('completion_tokens', 0),
+                                    'total_tokens': usage.get('total_tokens', 0)
+                                }
+                                logger.info(f"DEBUG - Tokens encontrados con to_dict: {usage_data}")
+                        except Exception as e:
+                            logger.error(f"Error con to_dict: {e}")
+                            
+                    # 4. Si todo falla, usar estimación
+                    if not usage_data:
+                        # Hacer una estimación aproximada basada en la longitud de los mensajes y la respuesta
+                        total_input_chars = sum(len(str(m.get('content', ''))) for m in messages)
+                        total_output_chars = len(result)
+                        
+                        # Estimación: aproximadamente 4 caracteres por token
+                        estimated_input_tokens = total_input_chars // 4
+                        estimated_output_tokens = total_output_chars // 4
+                        estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
+                        
+                        usage_data = {
+                            'prompt_tokens': estimated_input_tokens,
+                            'completion_tokens': estimated_output_tokens,
+                            'total_tokens': estimated_total_tokens
+                        }
+                        logger.info(f"DEBUG - Tokens estimados: {usage_data}")
+                    
+                    # Crear diccionario con datos de uso
+                    response_dict = {
+                        'id': response.id,
+                        'model': response.model,
+                        'usage': usage_data
+                    }
+                    
+                    # Registrar uso con log detallado
+                    logger.info(f"Registrando uso de OpenAI para {company.name}: {usage_data['total_tokens']} tokens")
+                    
+                    # Importar aquí para evitar circular imports
+                    from .openai_metrics_service import OpenAIMetricsService
+                    metrics_service = OpenAIMetricsService()
+                    
+                    record = metrics_service.record_api_usage(
+                        company=company, 
+                        session=session,
+                        response_data=response_dict
+                    )
+                    
+                    if record:
+                        logger.info(f"✓ Registro de uso guardado: ID={record.id}, Tokens={record.tokens_total}, Costo=${record.cost_total}")
+                    
+                except Exception as e:
+                    logger.error(f"Error registrando uso de OpenAI: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+            
+            return result
             
         except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            return "Lo siento, en este momento no puedo procesar tu solicitud. Por favor, intenta de nuevo más tarde."
+            logger.error(f"Error generando respuesta: {e}")
+            return f"Error en el servicio: {str(e)}"
         
     def _create_system_prompt(self, company_info, language_code='es'):
         """

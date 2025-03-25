@@ -337,7 +337,9 @@ def webhook(request):
                             message="", 
                             company_info=company_info,
                             language_code=language_code,
-                            is_first_message=True
+                            is_first_message=True,
+                            company=company,
+                            session=session
                         )
                         
                         # Enviar mensaje de bienvenida
@@ -391,7 +393,9 @@ def webhook(request):
                     user_id=from_phone,
                     message=message_text,
                     company_info=company_info,
-                    language_code=user.language
+                    language_code=user.language,
+                    company=company,
+                    session=session
                 )
                 
                 # Enviar respuesta
@@ -489,7 +493,9 @@ def webhook(request):
                         user_id=from_phone,
                         message=transcription,
                         company_info=company_service.get_company_info(company),
-                        language_code=user.language
+                        language_code=user.language,
+                        company=company,
+                        session=session,
                     )
                     
                     # Crear mensaje de respuesta
@@ -607,7 +613,9 @@ def webhook(request):
                     user_id=from_phone,
                     message=message_text,
                     company_info=company_info,
-                    language_code=user.language
+                    language_code=user.language,
+                    company=company,
+                    session=session
                 )
                 
                 # Enviar respuesta al usuario

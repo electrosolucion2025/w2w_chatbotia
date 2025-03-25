@@ -788,3 +788,26 @@ class AudioMessageAdmin(admin.ModelAdmin):
     short_transcription.short_description = "Transcription"
     full_transcription.short_description = "Full transcription"
     message_info.short_description = "Message"
+
+def get_app_list_with_openai_dashboard(self, request):
+    """Agregar enlace al dashboard de OpenAI en el menú lateral"""
+    app_list = admin.AdminSite.get_app_list(self, request)
+    
+    # Solo para staff/admin
+    if request.user.is_staff:
+        # Buscar la aplicación chatbot
+        for app in app_list:
+            if app['app_label'] == 'chatbot':
+                # Añadir enlace personalizado
+                app['models'].append({
+                    'name': 'OpenAI Dashboard',
+                    'object_name': 'OpenAIDashboard',
+                    'admin_url': '/openai-dashboard/',
+                    'view_only': True,
+                    'perms': {'view': True}
+                })
+    
+    return app_list
+
+# Aplicar el método a la instancia del sitio de administración
+admin.site.get_app_list = get_app_list_with_openai_dashboard.__get__(admin.site)
