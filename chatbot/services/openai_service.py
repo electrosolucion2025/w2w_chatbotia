@@ -81,7 +81,8 @@ class OpenAIService:
             str: The system prompt
         """
         # Instrucción clara de idioma
-        prompt = f"INSTRUCCIÓN IMPORTANTE: Traduce tu respuesta al siguiente codigo ISO / lenguage: '{language_code}'. Adapta tu tono y estilo a este idioma.\n\n"
+        prompt = f"INSTRUCCIÓN IMPORTANTE: Traduce tu respuesta al siguiente codigo ISO / lenguage: '{language_code}'. Adapta tu tono y estilo a este idioma.\n"
+        prompt += "Si te solicitan un cambio de idioma a mitad de conversación, cambialo y traduce tu respuesta al nuevo idioma solicitado.\n\n"
     
         if not company_info:
             return "Eres un asistente virtual que ayuda a los clientes con sus consultas."

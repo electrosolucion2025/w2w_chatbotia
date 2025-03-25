@@ -55,6 +55,10 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'w2w_chatbotia.urls'
 
+CSRF_TRUSTED_ORIGINS = [
+    'https://89d3-88-24-196-16.ngrok-free.app',
+]
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
