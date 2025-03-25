@@ -37,6 +37,10 @@ class CompanyAdmin(admin.ModelAdmin):
     
     def feedback_summary(self, obj):
         """Muestra un resumen del feedback de la empresa"""
+        if not obj or not obj.pk:
+            return "Nueva empresa - Guardar primero para ver estadísticas"
+        
+        # Obtener estadísticas de feedback
         stats = feedback_service.get_cached_feedback_stats(obj, days=30)
         
         if "error" in stats:
@@ -92,6 +96,10 @@ class CompanyAdmin(admin.ModelAdmin):
         
     def feedback_detailed_stats(self, obj):
         """Muestra estadísticas detalladas de feedback"""
+        # Verificar que el objeto exista y tenga ID
+        if not obj or not obj.pk:
+            return "Las estadísticas de feedback estarán disponibles después de guardar."
+        
         # Añadir botón para refrescar estadísticas
         refresh_url = reverse('admin:company_refresh_stats', args=[obj.pk])
         refresh_button = f'<a href="{refresh_url}" class="button">Actualizar estadísticas</a>'
@@ -181,7 +189,10 @@ class CompanyAdmin(admin.ModelAdmin):
         from django.urls import path
         urls = super().get_urls()
         custom_urls = [
-            path('<uuid:pk>/refresh_stats/', self.admin_site.admin_view(self.refresh_stats_view), name='company_refresh_stats'),
+            path(
+                '<uuid:pk>/refresh_stats/',
+                self.admin_site.admin_view(self.refresh_stats_view),
+                name='company_refresh_stats'),
         ]
         return custom_urls + urls
         
@@ -205,14 +216,25 @@ class CompanyAdmin(admin.ModelAdmin):
         return HttpResponseRedirect(f"../")
     
     def change_view(self, request, object_id, form_url='', extra_context=None):
+        """Personalizar la vista de edición para agregar botones personalizados"""
         extra_context = extra_context or {}
-        extra_context['show_refresh_button'] = True  # Mostrar el botón en la vista de cambio
-        return super().change_view(request, object_id, form_url, extra_context)
+        
+        # Solo agregar el botón si la empresa existe (tiene object_id)
+        if object_id:
+            refresh_url = reverse('admin:company_refresh_stats', args=[object_id])
+            extra_context['refresh_stats_url'] = refresh_url
+            
+        return super().change_view(
+            request, object_id, form_url, extra_context=extra_context
+        )
     
     def add_view(self, request, form_url='', extra_context=None):
+        """Personalizar la vista de creación"""
+        # No agregar el botón en la vista de creación
         extra_context = extra_context or {}
-        extra_context['show_refresh_button'] = False  # No mostrar el botón en la vista de añadir
-        return super().add_view(request, form_url, extra_context)
+        return super().add_view(
+            request, form_url, extra_context=extra_context
+        )
 
 class UserCompanyInteractionInline(admin.TabularInline):
     model = UserCompanyInteraction
