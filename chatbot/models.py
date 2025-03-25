@@ -141,11 +141,17 @@ class Session(models.Model):
     ended_at = models.DateTimeField(null=True, blank=True)
     feedback_requested = models.BooleanField(default=False, help_text="Indica si se ha solicitado feedback al usuario")
     feedback_requested_at = models.DateTimeField(null=True, blank=True, help_text="Fecha y hora en que se solicitó el feedback")
+    feedback_response = models.CharField(max_length=20, null=True, blank=True, help_text="Tipo de feedback: positive, negative, comment, etc.")
+    feedback_received_at = models.DateTimeField(null=True, blank=True, help_text="Cuándo se recibió el feedback")
+    feedback_comment_requested = models.BooleanField(default=False, help_text="Indica si se solicitó un comentario adicional")
+    feedback_comment = models.TextField(null=True, blank=True, help_text="Comentario adicional proporcionado como feedback")
+    farewell_message_sent = models.BooleanField(default=False, help_text="Indica si ya se envió un mensaje de despedida")
     analysis_results_json = models.TextField(
         blank=True, 
         null=True,
         help_text="Resultados del análisis de la conversación (JSON)"
     )
+    
     
     @property
     def analysis_results(self):
