@@ -5,8 +5,48 @@ from django.http import HttpResponseRedirect
 from django.contrib import messages
 
 from chatbot.services.conversation_analysis_service import ConversationAnalysisService
-from .models import *
+from .models import (
+    Session, Message, User, Company, CompanyInfo, Feedback,
+    PolicyAcceptance, PolicyVersion, AudioMessage, UserCompanyInteraction,
+    CompanyAdmin as CompanyAdministrator, LeadStatistics
+)
 from .services.feedback_service import FeedbackService
+
+# Agregar al inicio del archivo
+from django.contrib.admin import AdminSite
+from django.contrib.auth.models import User as DjangoUser, Group
+
+class CompanyAdminSite(AdminSite):
+    """
+    Sitio de administración personalizado para administradores de empresa
+    """
+    site_header = 'Portal de Administración Empresarial'
+    site_title = 'Portal Administración'
+    index_title = 'Administración de Empresa'
+    
+    def each_context(self, request):
+        context = super().each_context(request)
+        # Añadir información de la empresa si es un admin de empresa
+        if hasattr(request.user, 'company_admin'):
+            company = request.user.company_admin.company
+            context['company_name'] = company.name
+            if company.logo:
+                context['company_logo'] = company.logo.url
+        return context
+
+    def index(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        if hasattr(request.user, 'company_admin'):
+            company = request.user.company_admin.company
+            extra_context['welcome_message'] = f'Bienvenido al panel de administración de {company.name}'
+            extra_context['company'] = company
+        return super().index(request, extra_context)
+
+# Crear instancia del admin site
+company_admin_site = CompanyAdminSite(name='company_admin')
+
+# La registración de modelos se hará al final del archivo
+# después de que todas las clases Admin estén definidas
 
 # Inicializar servicio de feedback
 feedback_service = FeedbackService()
@@ -14,6 +54,70 @@ feedback_service = FeedbackService()
 class CompanyInfoInline(admin.TabularInline):
     model = CompanyInfo
     extra = 1
+
+class CompanyFilteredAdmin(admin.ModelAdmin):
+    """
+    Admin base que filtra resultados según la empresa del usuario administrativo
+    """
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # Si es superusuario, ver todo
+        if request.user.is_superuser:
+            return qs
+            
+        # Si es administrador de empresa, filtrar por su empresa
+        if hasattr(request.user, 'company_admin'):
+            company_id = request.user.company_admin.company.id
+            
+            # Verificar qué campo usar para filtrar según el modelo
+            if hasattr(self.model, 'company'):
+                return qs.filter(company__id=company_id)
+            elif hasattr(self.model, 'session') and hasattr(self.model.session.field.related_model, 'company'):
+                return qs.filter(session__company__id=company_id)
+            elif hasattr(self.model, 'user') and hasattr(self.model.user.field.related_model, 'company_interactions'):
+                # Para modelos que tienen user relacionado con empresas
+                return qs.filter(user__company_interactions__company__id=company_id).distinct()
+                
+        return qs
+        
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        # Restringir las opciones de los campos foreign key según la empresa
+        if not request.user.is_superuser and hasattr(request.user, 'company_admin'):
+            company_id = request.user.company_admin.company.id
+            
+            if db_field.name == 'company':
+                kwargs['queryset'] = Company.objects.filter(id=company_id)
+            elif db_field.name == 'session':
+                kwargs['queryset'] = Session.objects.filter(company__id=company_id)
+            elif db_field.name == 'user':
+                # Filtrar usuarios que hayan interactuado con la empresa
+                kwargs['queryset'] = User.objects.filter(
+                    company_interactions__company__id=company_id
+                ).distinct()
+                
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+    
+    def has_change_permission(self, request, obj=None):
+        # Solo permitir editar objetos de su empresa
+        if obj is None:
+            return True
+        
+        if request.user.is_superuser:
+            return True
+            
+        if hasattr(request.user, 'company_admin'):
+            company_id = request.user.company_admin.company.id
+            
+            if hasattr(obj, 'company') and obj.company.id == company_id:
+                return True
+            elif hasattr(obj, 'session') and obj.session.company.id == company_id:
+                return True
+                
+        return False
+        
+    def has_delete_permission(self, request, obj=None):
+        # Solo permitir eliminar objetos de su empresa
+        return self.has_change_permission(request, obj)
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
@@ -403,7 +507,7 @@ class MessageInline(admin.TabularInline):
     max_num = 0  # Solo mostrar registros existentes
 
 @admin.register(Session)
-class SessionAdmin(admin.ModelAdmin):
+class SessionAdmin(CompanyFilteredAdmin):
     list_display = ('id', 'user_info', 'company_name', 'started_at', 'status', 'duration', 'message_count', 'lead_interest')
     list_filter = ('company', 'started_at', 'ended_at')
     search_fields = ('user__name', 'user__whatsapp_number', 'company__name')
@@ -609,7 +713,7 @@ class LeadStatisticsPanel(admin.ModelAdmin):
         return super().changelist_view(request, extra_context=extra_context)
 
 @admin.register(Message)
-class MessageAdmin(admin.ModelAdmin):
+class MessageAdmin(CompanyFilteredAdmin):
     list_display = ('short_text', 'direction', 'user_info', 'company_name', 'session_link', 'created_at')
     list_filter = ('company', 'is_from_user', 'created_at')
     search_fields = ('message_text', 'user__name', 'user__whatsapp_number', 'company__name')
@@ -645,13 +749,13 @@ class MessageAdmin(admin.ModelAdmin):
     session_link.short_description = "Sesión"
 
 @admin.register(CompanyInfo)
-class CompanyInfoAdmin(admin.ModelAdmin):
+class CompanyInfoAdmin(CompanyFilteredAdmin):
     list_display = ('company', 'title', 'created_at', 'updated_at')
     list_filter = ('company',)
     search_fields = ('title', 'content')
 
 @admin.register(Feedback)
-class FeedbackAdmin(admin.ModelAdmin):
+class FeedbackAdmin(CompanyFilteredAdmin):
     list_display = ('user', 'company', 'rating', 'has_comment', 'session_link', 'created_at')
     list_filter = ('rating', 'company', 'created_at')
     search_fields = ('user__name', 'user__whatsapp_number', 'comment', 'company__name')
@@ -811,3 +915,185 @@ def get_app_list_with_openai_dashboard(self, request):
 
 # Aplicar el método a la instancia del sitio de administración
 admin.site.get_app_list = get_app_list_with_openai_dashboard.__get__(admin.site)
+
+# También para administrar CompanyAdmin
+@admin.register(CompanyAdministrator)  # Usar el nombre renombrado
+class CompanyAdministratorAdmin(admin.ModelAdmin):  # Cambiar nombre de la clase admin
+    list_display = ('user', 'company', 'is_primary', 'created_at')
+    list_filter = ('company', 'is_primary')
+    search_fields = ('user__username', 'user__email', 'company__name')
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # Superuser ve todo
+        if request.user.is_superuser:
+            return qs
+        # Administrador de empresa solo ve sus administradores
+        if hasattr(request.user, 'company_admin'):
+            return qs.filter(company=request.user.company_admin.company)
+        return qs.none()
+        
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if not request.user.is_superuser and hasattr(request.user, 'company_admin'):
+            if db_field.name == 'company':
+                kwargs['queryset'] = Company.objects.filter(id=request.user.company_admin.company.id)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+        
+    def has_change_permission(self, request, obj=None):
+        if obj is None:
+            return True
+        if request.user.is_superuser:
+            return True
+        if hasattr(request.user, 'company_admin') and request.user.company_admin.is_primary:
+            return obj.company == request.user.company_admin.company
+        return False
+        
+    def has_delete_permission(self, request, obj=None):
+        return self.has_change_permission(request, obj)
+
+# Justo antes del bloque de registros finales company_admin_site.register(...)
+
+# Admin para User en el contexto de una empresa
+class UserCompanyFilteredAdmin(CompanyFilteredAdmin):
+    list_display = ('whatsapp_number', 'name', 'created_at', 'policies_status')
+    search_fields = ('whatsapp_number', 'name', 'email')
+    list_filter = ('policies_accepted', 'created_at')
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # Si no es superusuario, filtrar por usuarios que han interactuado con la empresa
+        if not request.user.is_superuser and hasattr(request.user, 'company_admin'):
+            company_id = request.user.company_admin.company.id
+            # Filtrar usuarios que tengan interacciones con la empresa
+            return qs.filter(
+                company_interactions__company__id=company_id
+            ).distinct()
+        return qs
+    
+    def policies_status(self, obj):
+        # Mantener la función original
+        if obj.policies_accepted:
+            return format_html(
+                '<span style="color: green;">✅ Aceptadas</span><br>'
+                '<small>Versión: {} - {}</small>',
+                obj.policies_version,
+                obj.policies_accepted_date.strftime('%d/%m/%Y %H:%M')
+            )
+        elif obj.waiting_policy_acceptance:
+            return format_html('<span style="color: orange;">⏳ Pendiente de respuesta</span>')
+        else:
+            return format_html('<span style="color: red;">❌ No aceptadas</span>')
+    
+    policies_status.short_description = "Políticas"
+
+# Admin para LeadStatistics en el contexto de una empresa
+class LeadStatisticsCompanyAdmin(CompanyFilteredAdmin):
+    change_list_template = 'admin/lead_statistics.html'
+    
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        
+        # Filtrar por empresa si no es superusuario
+        company_filter = ""
+        if not request.user.is_superuser and hasattr(request.user, 'company_admin'):
+            company_id = request.user.company_admin.company.id
+            company_filter = f"AND company_id = '{company_id}'"
+        
+        # Obtener estadísticas de intenciones para PostgreSQL
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT 
+                    analysis_results_json::json->>'primary_intent' as intent,
+                    COUNT(*) as count
+                FROM 
+                    chatbot_session
+                WHERE 
+                    analysis_results_json IS NOT NULL
+                    {company_filter}
+                GROUP BY 
+                    intent
+                ORDER BY 
+                    count DESC
+            """)
+            intent_stats = cursor.fetchall()
+            
+        # Obtener estadísticas de nivel de interés para PostgreSQL
+        with connection.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT 
+                    analysis_results_json::json->>'purchase_interest_level' as interest,
+                    COUNT(*) as count
+                FROM 
+                    chatbot_session
+                WHERE 
+                    analysis_results_json IS NOT NULL
+                    {company_filter}
+                GROUP BY 
+                    interest
+                ORDER BY 
+                    count DESC
+            """)
+            interest_stats = cursor.fetchall()
+        
+        # Preparar datos para gráficos
+        extra_context['intent_stats'] = intent_stats
+        extra_context['interest_stats'] = interest_stats
+        
+        return super().changelist_view(request, extra_context=extra_context)
+
+# Admin para AudioMessage en el contexto de una empresa
+class AudioMessageCompanyAdmin(CompanyFilteredAdmin):
+    list_display = ('id', 'message_info', 'created_at', 'processing_status', 'audio_player', 'short_transcription')
+    list_filter = ('processing_status', 'created_at')
+    search_fields = ('transcription',)
+    readonly_fields = ('created_at', 'updated_at', 'audio_player', 'full_transcription', 'message_info')
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # Si no es superusuario, filtrar por empresa
+        if not request.user.is_superuser and hasattr(request.user, 'company_admin'):
+            company_id = request.user.company_admin.company.id
+            # Filtrar mensajes de audio que pertenezcan a la empresa
+            return qs.filter(message__company__id=company_id)
+        return qs
+    
+    def message_info(self, obj):
+        if obj.message:
+            return f"{obj.message.user.whatsapp_number} - {obj.message.created_at.strftime('%d/%m/%Y %H:%M')}"
+        return "No message"
+    
+    def audio_player(self, obj):
+        if obj.audio_file:
+            return format_html(
+                '<audio controls style="width:300px"><source src="{}" type="audio/ogg">Tu navegador no soporta audio</audio>',
+                obj.audio_file.url
+            )
+        return "No audio File"
+    
+    def short_transcription(self, obj):
+        if obj.transcription:
+            text = obj.transcription[:50]
+            if len(obj.transcription) > 50:
+                text += "..."
+            return text
+        return "No transcription"
+    
+    def full_transcription(self, obj):
+        if obj.transcription:
+            return obj.transcription
+        return "No transcription"
+    
+    audio_player.short_description = "Player"
+    short_transcription.short_description = "Transcription"
+    full_transcription.short_description = "Full transcription"
+    message_info.short_description = "Message"
+
+company_admin_site.register(Session, SessionAdmin)
+company_admin_site.register(Message, MessageAdmin)
+company_admin_site.register(Feedback, FeedbackAdmin)
+company_admin_site.register(CompanyInfo, CompanyInfoAdmin)
+company_admin_site.register(DjangoUser)
+company_admin_site.register(User, UserCompanyFilteredAdmin)
+company_admin_site.register(LeadStatistics, LeadStatisticsCompanyAdmin)
+company_admin_site.register(AudioMessage, AudioMessageCompanyAdmin)

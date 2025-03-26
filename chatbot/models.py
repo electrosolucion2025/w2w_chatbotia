@@ -2,6 +2,7 @@ import uuid
 from django.db import models
 from django.utils import timezone
 import json
+from django.contrib.auth.models import User as DjangoUser
 
 class Company(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -490,3 +491,21 @@ class LeadStatistics(Session):
         proxy = True
         verbose_name = 'Lead Statistics'
         verbose_name_plural = 'Lead Statistics'
+        
+class CompanyAdmin(models.Model):
+    """
+    Modelo para asociar usuarios administrativos a empresas específicas
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(DjangoUser, on_delete=models.CASCADE, related_name='company_admin')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='administrators')
+    is_primary = models.BooleanField(default=False, help_text="Indica si es el administrador principal de la empresa")
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.user.username} - Admin de {self.company.name}"
+    
+    class Meta:
+        verbose_name = "Administrador de Empresa"
+        verbose_name_plural = "Administradores de Empresas"
+        unique_together = ('user', 'company')

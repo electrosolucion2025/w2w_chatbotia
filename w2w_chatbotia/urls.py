@@ -18,10 +18,14 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from chatbot.admin import company_admin_site
+from chatbot.views_admin import create_company_admin
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('admin/', admin.site.urls),  # Admin normal para superusers
+    path('empresa/', company_admin_site.urls),  # Admin personalizado para admins de empresa
     path('', include('chatbot.urls')),
+    path('admin/create-company-admin/', create_company_admin, name='create_company_admin'),
 ]
 
 if settings.DEBUG:
