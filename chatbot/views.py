@@ -519,6 +519,56 @@ def webhook(request):
                 
                 return HttpResponse('OK', status=200)
 
+            # AÑADIR AQUÍ: Manejar mensajes de imagen
+            elif message_type == "image":
+                # En algunas versiones de la API, la estructura puede ser diferente
+                if "image" in metadata:
+                    media_id = metadata["image"].get("id")
+                    caption = metadata["image"].get("caption", "")
+                else:
+                    # Intentar buscar en otras ubicaciones comunes
+                    media_obj = metadata.get("media", {})
+                    media_id = media_obj.get("id") or metadata.get("media_id")
+                    caption = media_obj.get("caption", "") or metadata.get("caption", "")
+
+                logger.info(f"Imagen recibida con ID: {media_id}, caption: {caption}")
+                
+                if media_id:
+                    # Procesar imagen como potencial ticket
+                    response = conversation_service.handle_image_message(
+                        from_phone=from_phone,
+                        media_id=media_id,
+                        message_text=caption,
+                        company=company,
+                        session=session
+                    )
+                    
+                    # Enviar respuesta
+                    whatsapp.send_message(from_phone, response)
+                    
+                    # Guardar mensaje en BD (tanto la recepción como la respuesta)
+                    Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=caption or "[Imagen sin texto]",
+                        message_type="image",
+                        is_from_user=True
+                    )
+                    
+                    Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=response,
+                        message_type="text",
+                        is_from_user=False
+                    )
+                    
+                    message_text = f"[Imagen procesada: {media_id}] {caption or ''}"
+                    
+                    return HttpResponse('OK', status=200)
+
             # PROCESAMIENTO DE MENSAJES INTERACTIVOS (BOTONES)
             if metadata.get("type") == "interactive" and "button_id" in metadata:
                 button_id = metadata.get("button_id")

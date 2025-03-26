@@ -282,6 +282,27 @@ class WhatsAppService:
                 
                 # Devolver información básica para el mensaje de audio
                 return from_phone, "[Audio Message]", message_id, metadata
+            
+            elif message_type == "image":
+                # Procesar mensaje de imagen
+                image_data = message.get("image", {})
+                media_id = image_data.get("id")
+                caption = image_data.get("caption", "")
+                
+                if not media_id:
+                    logger.error(f"Mensaje de imagen sin ID recibido de {from_phone}")
+                    return None, None, None, None
+                
+                logger.info(f"Mensaje de imagen recibido de {from_phone}, ID: {media_id}, Caption: {caption}")
+                
+                # Añadir información de la imagen a los metadatos
+                metadata["image"] = {
+                    "id": media_id,
+                    "caption": caption
+                }
+                
+                # Devolver información para el mensaje de imagen
+                return from_phone, caption or "[Imagen]", message_id, metadata
                     
             else:
                 # Otros tipos de mensajes (imagen, audio, etc.)
@@ -444,40 +465,42 @@ class WhatsAppService:
     def get_media_url(self, media_id):
         """
         Obtiene la URL de descarga para un archivo multimedia
-        
-        Args:
-            media_id (str): ID del archivo multimedia
-            
-        Returns:
-            str or None: URL del archivo o None si hay error
         """
         try:
-            import requests
-            import logging
-            logger = logging.getLogger(__name__)
+            # URL para obtener información del recurso
+            endpoint = f"https://graph.facebook.com/v22.0/{media_id}"
             
-            url = f"{self.BASE_URL}/{media_id}"
+            # Headers de autorización
             headers = {
-                "Authorization": f"Bearer {self.api_token}"
+                "Authorization": f"Bearer {self.api_token}",
+                "Content-Type": "application/json"
             }
             
+            # Log para depuración
             logger.debug(f"Obteniendo URL para media ID: {media_id}")
-            response = requests.get(url, headers=headers)
             
-            if response.status_code == 200:
-                data = response.json()
-                if "url" in data:
-                    logger.info(f"URL de media obtenida correctamente: {data['url'][:30]}...")
-                    return data["url"]
-                else:
-                    logger.error("Respuesta no contiene URL")
-            else:
+            # Hacer solicitud a la API
+            response = requests.get(endpoint, headers=headers)
+            
+            # Verificar si la solicitud fue exitosa
+            if response.status_code != 200:
+                # Mostrar error detallado para depuración
                 logger.error(f"Error obteniendo URL: {response.status_code}")
-                
-            return None
+                logger.error(f"Respuesta: {response.text}")
+                return None
             
+            # Parsear respuesta JSON
+            data = response.json()
+            
+            # La URL está en el campo 'url' del objeto JSON
+            if 'url' in data:
+                return data['url']
+            else:
+                logger.error(f"No se encontró URL en la respuesta: {data}")
+                return None
+                
         except Exception as e:
-            logger.error(f"Error en get_media_url: {str(e)}")
+            logger.error(f"Error obteniendo URL del medio: {e}")
             return None
         
     def _split_long_text(self, text, max_length):
@@ -569,3 +592,93 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Error enviando selección de idioma: {e}")
             return None
+        
+    def download_media(self, media_id):
+        """
+        Descarga un archivo multimedia de WhatsApp usando su media_id
+        
+        Args:
+            media_id (str): ID del archivo multimedia
+            
+        Returns:
+            str: Ruta al archivo descargado o None en caso de error
+        """
+        try:
+            import os
+            import tempfile
+            import uuid
+            from django.core.files import File
+            from django.conf import settings
+            
+            # 1. Obtener la URL de descarga
+            media_url = self.get_media_url(media_id)
+            
+            if not media_url:
+                logger.error(f"No se pudo obtener la URL para media_id: {media_id}")
+                return None
+            
+            # 2. Configurar encabezados con el token de autenticación
+            headers = {"Authorization": f"Bearer {self.api_token}"}
+            
+            logger.debug(f"Descargando medio desde: {media_url}")
+            
+            # 3. Descargar el archivo
+            response = requests.get(media_url, headers=headers, stream=True)
+            
+            if response.status_code != 200:
+                logger.error(f"Error descargando media: {response.status_code}")
+                logger.error(f"Respuesta: {response.text}")
+                return None
+                
+            # 4. Determinar extensión basada en Content-Type
+            content_type = response.headers.get('Content-Type', 'application/octet-stream')
+            extension = self._get_extension_from_mime(content_type)
+            
+            # 5. Guardar en archivo temporal
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+            temp_path = temp_file.name
+            
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    temp_file.write(chunk)
+            temp_file.close()
+            
+            # 6. Crear directorio para archivos de medios si no existe
+            media_dir = os.path.join(settings.MEDIA_ROOT, 'whatsapp_media')
+            os.makedirs(media_dir, exist_ok=True)
+            
+            # 7. Generar nombre de archivo único
+            file_name = f"{uuid.uuid4()}{extension}"
+            file_path = os.path.join('whatsapp_media', file_name)
+            
+            # 8. Usar API de Django para guardar archivo
+            with open(temp_path, 'rb') as f:
+                from django.core.files.storage import default_storage
+                default_storage.save(file_path, File(f))
+            
+            # 9. Eliminar archivo temporal
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+            
+            return file_path
+            
+        except Exception as e:
+            logger.error(f"Error descargando media: {e}", exc_info=True)
+            return None
+        
+    def _get_extension_from_mime(self, mime_type):
+        """Obtiene la extensión de archivo según el tipo MIME"""
+        mime_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+            "audio/ogg": ".ogg",
+            "audio/mpeg": ".mp3",
+            "video/mp4": ".mp4",
+            "application/pdf": ".pdf",
+        }
+        
+        return mime_map.get(mime_type.lower(), ".bin")

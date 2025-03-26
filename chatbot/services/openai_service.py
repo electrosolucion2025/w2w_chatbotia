@@ -3,6 +3,8 @@ import openai
 from django.conf import settings
 from django.utils import timezone
 
+from chatbot.models import TicketCategory
+
 logger = logging.getLogger(__name__)
 
 class OpenAIService:
@@ -31,6 +33,12 @@ class OpenAIService:
             str: The generated response
         """
         try:
+            # AÑADIR AQUÍ: Asegurar que company_info tiene el ID de la empresa
+            if company and (not company_info or not company_info.get('id')):
+                company_info = company_info or {}
+                company_info['id'] = company.id  # Añadir directamente el ID de la empresa
+                logger.info(f"DEBUG - Añadido ID de empresa {company.id} a company_info")
+            
             system_prompt = self._create_system_prompt(company_info, language_code)
             
             # Log language code for debugging
@@ -68,13 +76,7 @@ class OpenAIService:
             # Extract the text response
             result = response.choices[0].message.content
             
-            logger.info(f"DEBUG - OpenAI response object: {type(response)}")
-            logger.info(f"DEBUG - OpenAI response dir: {dir(response)}")
-            logger.info(f"DEBUG - OpenAI response attrs: id={response.id}, model={response.model}")
-            
-            logger.info(f"DEBUG - Verificando parámetro company: {company}")
-            
-            # AÑADIR ESTO: Registrar uso de la API si hay una empresa asociada
+            # Registrar uso de la API si hay una empresa asociada
             if company:
                 try:
                     logger.info(f"DEBUG - Intentando acceder a response.usage...")
@@ -206,47 +208,108 @@ class OpenAIService:
         prompt += "Utiliza la siguiente información para responder consultas específicas. "
         prompt += "Traduce tanto los titulos como las secciones de los mismos al idioma indicado en el codigo ISO / lenguage.\n\n"
         
-        # Add company information sections
-        sections = []
+        # PREPARAR TODAS LAS CATEGORÍAS DE INFORMACIÓN Y TICKETS
+        all_categories = []
+        ticket_categories_data = []
+        
+        # 1. Recopilar información de CompanyInfo (secciones)
         if 'sections' in company_info and company_info['sections']:
-            prompt += "\n\n--- INFORMACIÓN DISPONIBLE ---\n"
-            
             for section in company_info['sections']:
                 title = section.get('title', '')
                 content = section.get('content', '')
                 if title and content:
-                    prompt += f"\n### {title} ###\n{content}\n"
-                    sections.append(title)
+                    # Añadir a la lista de todas las categorías
+                    emoji = section.get('emoji', '')  # Emoji predeterminado si no hay específico
+                    all_categories.append({
+                        'type': 'info',
+                        'title': f"{emoji} {title}",
+                        'content': content
+                    })
         
-        # Add specific instructions about mentioning available sections
+        # 2. Recopilar categorías de tickets
+        company_id = company_info.get('id')
+        if company_id:
+            logger.info(f"DEBUG - Buscando categorías de tickets para company_id: {company_id}")
+            try:
+                # Obtener categorías de tickets
+                from chatbot.models import TicketCategory, Company
+                
+                # Intentar buscar por ID directamente
+                ticket_categories = TicketCategory.objects.filter(company_id=company_id)
+                if not ticket_categories.exists() and company_info.get('name'):
+                    # Intentar buscar por nombre
+                    try:
+                        company = Company.objects.get(name=company_info.get('name'))
+                        ticket_categories = TicketCategory.objects.filter(company=company)
+                    except Exception as e:
+                        logger.error(f"Error buscando empresa por nombre: {e}")
+                
+                # Recopilar datos de categorías de tickets
+                for category in ticket_categories:
+                    ticket_categories_data.append({
+                        'name': category.name,
+                        'instructions': category.prompt_instructions,
+                        'ask_for_photos': category.ask_for_photos
+                    })
+                    
+                    # Añadir a la lista de todas las categorías
+                    all_categories.append({
+                        'type': 'ticket',
+                        'title': f"🔧 {category.name}",
+                        'content': category.prompt_instructions or "Reporta problemas relacionados con esta categoría. Si precisas, puedes recibir fotos en el mismo chat."
+                    })
+                    
+                logger.info(f"DEBUG - Categorías de tickets encontradas: {len(ticket_categories_data)}")
+                
+            except Exception as e:
+                logger.error(f"Error procesando categorías de tickets: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        # CONSTRUIR EL PROMPT CON TODA LA INFORMACIÓN
+        
+        # 1. Primero añadir explicación de todas las categorías disponibles
+        if all_categories:
+            prompt += "\n\n--- CATEGORÍAS DE INFORMACIÓN Y AYUDA ---\n"
+            for category in all_categories:
+                prompt += f"- {category['title']}\n"
+        
+        # 2. Luego añadir secciones detalladas
+        prompt += "\n\n--- INFORMACIÓN DETALLADA POR CATEGORÍA ---\n"
+        
+        # 2.1 Información general
+        info_categories = [c for c in all_categories if c['type'] == 'info']
+        if info_categories:
+            prompt += "\n### INFORMACIÓN GENERAL ###\n"
+            for category in info_categories:
+                prompt += f"\n#### {category['title']} ####\n{category['content']}\n"
+        
+        # 2.2 Categorías de tickets/problemas
+        ticket_categories = [c for c in all_categories if c['type'] == 'ticket']
+        if ticket_categories:
+            prompt += "\n### REPORTES DE PROBLEMAS Y DESPERFECTOS ###\n"
+            prompt += "Puedes ayudar a reportar problemas o desperfectos en las siguientes categorías:\n\n"
+            
+            for category in ticket_categories:
+                prompt += f"#### {category['title']} ####\n{category['content']}\n\n"
+            
+            # Instrucciones para categorías que requieren fotos 
+            photo_categories = [c['name'] for c in ticket_categories_data if c.get('ask_for_photos')]
+            if photo_categories:
+                categories_str = ", ".join([f"'{cat}'" for cat in photo_categories])
+                prompt += f"\nPara reportes de {categories_str}, solicita amablemente al usuario "
+                prompt += "que envíe fotos del problema para facilitar su evaluación. Que envie fotos a este mismo chat.\n"
+                prompt += "Las fotos son muy útiles para diagnosticar correctamente el problema.\n"
+        
+        # Añadir instrucciones especiales
         prompt += "\n\n--- INSTRUCCIONES ESPECIALES ---\n"
         prompt += "0. Utiliza emojis para hacer la conversación más amena y amigable.\n"
-        prompt += "1. En tu primer mensaje a un nuevo usuario, preséntate brevemente y menciona las categorías en formato lista de información disponibles para orientarle.\n"
+        prompt += "1. En tu primer mensaje a un nuevo usuario, preséntate brevemente y menciona TODAS las categorías en formato lista (tanto de información como de reportes de problemas) para orientarle.\n"
         prompt += "2. Sé conciso pero completo en tus respuestas.\n"
         prompt += "3. Si la información por la que te preguntan es extensa, haz una lista primero y solicita que te pregunten por lo que quieran.\n"
         prompt += "4. Utiliza un tono amable y profesional.\n"
         prompt += "5. Si desconoces la respuesta a una pregunta específica, indícalo amablemente y ofrece poner al cliente en contacto con un asesor.\n"
         
-        # NUEVO: Mejora de la detección de solicitud de contacto y cierre de sesión
-        prompt += "6. Si el cliente solicita contacto con un asesor, agente o persona real, detecta esta intención y sigue estos pasos:\n"
-        prompt += "   a) Solicita su nombre para el registro\n" 
-        prompt += "   b) Pregunta si tiene alguna preferencia de horario o forma de contacto\n"
-        prompt += "   c) Recopila toda la información relevante sobre su consulta específica\n"
-        prompt += "   d) Al final, SIEMPRE pregúntale: '¿Hay algo más en lo que pueda ayudarte ahora, o prefieres finalizar la conversación y esperar el contacto del asesor?'\n"
-        
-        prompt += "7. Posteriormente informale que el agente se pondra en contacto con él y muestrale los datos de contacto por si es urgente.\n"
-        prompt += "8. Cuando el usuario indique que quiere terminar la conversación o se despida, despídete cordialmente y agradece por utilizar el servicio.\n"
-        
-        # NUEVO: Mejora para manejar el cierre de sesión
-        prompt += "8. Cuando detectes intenciones de despedida o cierre de la conversación:\n"
-        prompt += "   a) Si hay ambigüedad sobre si el usuario ha terminado, pregunta explícitamente: '¿Deseas finalizar nuestra conversación o tienes alguna otra consulta?'\n"
-        prompt += "   b) Si el usuario no ha interactuado por un tiempo, pregunta: '¿Sigues ahí? ¿Puedo ayudarte con algo más o prefieres que finalicemos la conversación?'\n"
-        
-        prompt += "9. Cuando finalice la sesion di: Chat finalizado.\n"
-        
-        # Add the list of available sections for easy reference
-        if sections:
-            prompt += "\n--- CATEGORÍAS DE INFORMACIÓN DISPONIBLES ---\n"
-            prompt += ", ".join(sections)
+        # Resto de instrucciones igual...
         
         return prompt

@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import List
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content, HtmlContent
 from django.conf import settings
@@ -162,4 +163,274 @@ class EmailService:
                 
         except Exception as e:
             logger.error(f"Error al enviar notificación de lead: {e}")
+            return False
+        
+    def send_ticket_notification(self, ticket):
+        """
+        Envía una notificación por email cuando se crea un nuevo ticket
+        
+        Args:
+            ticket: Objeto Ticket con los datos del ticket
+        
+        Returns:
+            bool: True si se envió correctamente, False en caso contrario
+        """
+        try:
+            # Verificar destinatarios
+            admin_emails = self._get_admin_emails_for_company(ticket.company)
+            
+            if not admin_emails:
+                logger.warning(f"No se puede enviar notificación de ticket para {ticket.id} porque no hay destinatarios")
+                return False
+                
+            # Preparar contenido del email
+            subject = f"Nuevo ticket: {ticket.title}"
+            
+            # Formatear contenido HTML
+            message_html = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #333; border-bottom: 1px solid #ddd; padding-bottom: 10px;">Nuevo Ticket Recibido</h2>
+                
+                <div style="margin: 20px 0;">
+                    <p><strong>Título:</strong> {ticket.title}</p>
+                    <p><strong>Cliente:</strong> {ticket.user.name or ticket.user.whatsapp_number}</p>
+                    <p><strong>Categoría:</strong> {ticket.category.name if ticket.category else 'Sin categorizar'}</p>
+                    <p><strong>Fecha:</strong> {ticket.created_at.strftime('%d/%m/%Y %H:%M')}</p>
+                    <p><strong>Imágenes:</strong> {ticket.images.count()}</p>
+                </div>
+                
+                <div style="background-color: #f7f7f7; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0;">
+                    <h3 style="margin-top: 0;">Descripción:</h3>
+                    <p style="white-space: pre-line;">{ticket.description}</p>
+                </div>
+                
+                <div style="margin-top: 30px;">
+                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" 
+                       style="background-color: #3498db; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">
+                        Ver detalles del ticket
+                    </a>
+                </div>
+                
+                <p style="color: #777; font-size: 0.8em; margin-top: 30px; border-top: 1px solid #ddd; padding-top: 10px;">
+                    Este es un mensaje automático. Por favor no responda directamente a este correo.
+                </p>
+            </div>
+            """
+            
+            # Mensaje en texto plano
+            text_content = f"""
+            Nuevo Ticket Recibido
+            
+            Título: {ticket.title}
+            Cliente: {ticket.user.name or ticket.user.whatsapp_number}
+            Categoría: {ticket.category.name if ticket.category else 'Sin categorizar'}
+            Descripción: {ticket.description}
+            
+            El ticket incluye {ticket.images.count()} imagen(es).
+            
+            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/
+            """
+            
+            # Enviar emails a cada destinatario
+            success_count = 0
+            for recipient in admin_emails:
+                if self.send_email(
+                    to_email=recipient,
+                    subject=subject,
+                    html_content=message_html,
+                    text_content=text_content
+                ):
+                    success_count += 1
+                    
+            logger.info(f"Notificación de ticket enviada a {success_count} de {len(admin_emails)} destinatarios")
+            return success_count > 0
+            
+        except Exception as e:
+            logger.error(f"Error al enviar notificación de ticket: {e}")
+            return False
+    
+    def send_ticket_image_notification(self, ticket, image):
+        """
+        Envía una notificación por email cuando se añade una nueva imagen a un ticket
+        
+        Args:
+            ticket: Objeto Ticket con los datos del ticket
+            image: Objeto TicketImage con los datos de la imagen
+        
+        Returns:
+            bool: True si se envió correctamente, False en caso contrario
+        """
+        try:
+            # Verificar destinatarios
+            admin_emails = self._get_admin_emails_for_company(ticket.company)
+            
+            if not admin_emails:
+                logger.warning(f"No se puede enviar notificación de imagen para ticket {ticket.id} porque no hay destinatarios")
+                return False
+                
+            # Preparar contenido del email
+            subject = f"Nueva imagen en ticket: {ticket.title}"
+            
+            # Formatear contenido HTML
+            message_html = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #333; border-bottom: 1px solid #ddd; padding-bottom: 10px;">Nueva Imagen en Ticket Existente</h2>
+                
+                <div style="margin: 20px 0;">
+                    <p><strong>Ticket:</strong> {ticket.title}</p>
+                    <p><strong>Cliente:</strong> {ticket.user.name or ticket.user.whatsapp_number}</p>
+                    <p><strong>Imágenes totales:</strong> {ticket.images.count()}</p>
+                </div>
+                
+                <div style="background-color: #f7f7f7; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0;">
+                    <h3 style="margin-top: 0;">Descripción de la imagen:</h3>
+                    <p style="white-space: pre-line;">{image.ai_description[:500]}</p>
+                </div>
+                
+                <div style="margin-top: 30px;">
+                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" 
+                    style="background-color: #3498db; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">
+                        Ver detalles del ticket
+                    </a>
+                </div>
+            </div>
+            """
+            
+            # Mensaje en texto plano
+            text_content = f"""
+            Nueva imagen en ticket: {ticket.title}
+            
+            Cliente: {ticket.user.name or ticket.user.whatsapp_number}
+            Imágenes totales: {ticket.images.count()}
+            
+            Descripción de la nueva imagen:
+            {image.ai_description[:500]}
+            
+            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/
+            """
+            
+            # Enviar emails a cada destinatario
+            success_count = 0
+            for recipient in admin_emails:
+                if self.send_email(
+                    to_email=recipient,
+                    subject=subject,
+                    html_content=message_html,
+                    text_content=text_content
+                ):
+                    success_count += 1
+                    
+            logger.info(f"Notificación de imagen enviada a {success_count} de {len(admin_emails)} destinatarios")
+            return success_count > 0
+            
+        except Exception as e:
+            logger.error(f"Error al enviar notificación de imagen: {e}")
+            return False
+    
+    def _get_admin_emails_for_company(self, company):
+        """
+        Obtiene la lista de emails de administradores para una empresa
+        
+        Args:
+            company: Objeto Company
+        
+        Returns:
+            list: Lista de direcciones de email
+        """
+        from chatbot.models import CompanyAdmin
+        
+        admin_emails = []
+        
+        # Obtener emails de CompanyAdmin
+        company_admins = CompanyAdmin.objects.filter(company=company)
+        for admin in company_admins:
+            if admin.user.email:
+                admin_emails.append(admin.user.email)
+        
+        # Si no hay emails específicos, usar la configuración de la empresa
+        if not admin_emails and hasattr(company, 'contact_email') and company.contact_email:
+            admin_emails.append(company.contact_email)
+            
+        return admin_emails
+    
+    def send_email(self, to_email: str, subject: str, 
+                  html_content: str, text_content: str = None, 
+                  cc: List[str] = None, bcc: List[str] = None,
+                  attachment_path: str = None) -> bool:
+        """
+        Envía un email usando SendGrid
+        
+        Args:
+            to_email (str): Email del destinatario
+            subject (str): Asunto del email
+            html_content (str): Contenido HTML del email
+            text_content (str, optional): Contenido texto plano alternativo
+            cc (List[str], optional): Lista de emails para CC
+            bcc (List[str], optional): Lista de emails para BCC
+            attachment_path (str, optional): Ruta al archivo adjunto
+            
+        Returns:
+            bool: True si se envió correctamente, False en caso contrario
+        """
+        try:
+            sg = SendGridAPIClient(self.api_key)
+            
+            # Establecer email origen
+            from_email = Email(self.from_email, name=self.from_name)
+            
+            # Crear contenido
+            if not text_content:
+                text_content = "Este email requiere un cliente que soporte HTML para visualizarse correctamente"
+            
+            # Crear mensaje
+            message = Mail(
+                from_email=from_email,
+                subject=subject,
+                to_emails=[to_email],
+                plain_text_content=Content("text/plain", text_content),
+                html_content=Content("text/html", html_content)
+            )
+            
+            # # Añadir CC si existe
+            # if cc:
+            #     personalization = Personalization()
+            #     for cc_email in cc:
+            #         personalization.add_cc(Email(cc_email))
+            #     message.add_personalization(personalization)
+            
+            # # Añadir BCC si existe
+            # if bcc:
+            #     personalization = Personalization()
+            #     for bcc_email in bcc:
+            #         personalization.add_bcc(Email(bcc_email))
+            #     message.add_personalization(personalization)
+            
+            # # Añadir adjunto si existe
+            # if attachment_path:
+            #     import base64
+            #     attachment_filename = attachment_path.split('/')[-1]
+            #     with open(attachment_path, 'rb') as f:
+            #         data = base64.b64encode(f.read()).decode()
+                    
+            #         attachment = Attachment()
+            #         attachment.file_content = FileContent(data)
+            #         attachment.file_type = FileType('application/octet-stream')
+            #         attachment.file_name = FileName(attachment_filename)
+            #         attachment.disposition = Disposition('attachment')
+                    
+            #         message.add_attachment(attachment)
+            
+            # Enviar email
+            response = sg.send(message)
+            
+            # Verificar respuesta
+            if response.status_code in (200, 202):
+                logger.info(f"Email enviado correctamente a {to_email}")
+                return True
+            else:
+                logger.error(f"Error enviando email: {response.status_code} - {response.body}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error en SendGridService.send_email: {e}")
             return False

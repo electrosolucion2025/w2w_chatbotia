@@ -509,3 +509,74 @@ class CompanyAdmin(models.Model):
         verbose_name = "Administrador de Empresa"
         verbose_name_plural = "Administradores de Empresas"
         unique_together = ('user', 'company')
+        
+class TicketCategory(models.Model):
+    """Categorías para clasificar tickets (desperfectos, consultas técnicas, etc.)"""
+    name = models.CharField(max_length=100)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='ticket_categories')
+    prompt_instructions = models.TextField(help_text="Instrucciones que se añaden al prompt cuando se detecta esta categoría")
+    ask_for_photos = models.BooleanField(default=False, help_text="Si debe solicitar fotos automáticamente")
+    
+    def __str__(self):
+        return f"{self.name} ({self.company.name})"
+
+class Ticket(models.Model):
+    """Modelo para almacenar tickets/incidencias reportadas"""
+    STATUS_CHOICES = [
+        ('new', 'Nuevo'),
+        ('reviewing', 'En revisión'),
+        ('in_progress', 'En proceso'),
+        ('waiting_info', 'Esperando información'),
+        ('resolved', 'Resuelto'),
+        ('closed', 'Cerrado'),
+    ]
+    PRIORITY_CHOICES = [
+        ('low', 'Baja'),
+        ('medium', 'Media'),
+        ('high', 'Alta'),
+        ('urgent', 'Urgente'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='tickets')
+    category = models.ForeignKey(TicketCategory, on_delete=models.SET_NULL, null=True, related_name='tickets')
+    session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, related_name='tickets')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='tickets')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
+    assigned_to = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_tickets')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    
+    def __str__(self):
+        return self.title
+
+class TicketImage(models.Model):
+    """Imágenes asociadas a un ticket"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='ticket_images/%Y/%m/%d/')
+    caption = models.CharField(max_length=255, blank=True, null=True)
+    ai_description = models.TextField(blank=True, null=True, help_text="Descripción generada por IA de lo que muestra la imagen")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"Imagen para {self.ticket.title}"
+
+class TicketComment(models.Model):
+    """Comentarios y actualizaciones sobre un ticket"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(DjangoUser, on_delete=models.SET_NULL, null=True, related_name='ticket_comments')
+    is_staff = models.BooleanField(default=True)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['created_at']
+    
+    def __str__(self):
+        return f"Comentario en {self.ticket.title} por {self.author}"

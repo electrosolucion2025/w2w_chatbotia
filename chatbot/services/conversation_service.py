@@ -1,5 +1,12 @@
 import logging
+
+from django.conf import settings
+from django.utils import timezone
+
+from chatbot.models import CompanyAdmin, Ticket, TicketImage, User
+from chatbot.services.image_processing_service import ImageProcessingService
 from .openai_service import OpenAIService
+from chatbot.services.whatsapp_service import WhatsAppService
 
 logger = logging.getLogger(__name__)
 
@@ -8,6 +15,7 @@ class ConversationService:
     
     def __init__(self, max_context_length=30):
         self.openai_service = OpenAIService()
+        self.whatsapp_service = WhatsAppService()
         self.conversations = {}  # Store conversations in memory for now
         self.max_context_length = max_context_length
     
@@ -88,3 +96,247 @@ class ConversationService:
     def clear_conversation(self, user_id):
         """Clear a user's conversation history"""
         self.conversations[user_id] = []
+        
+    def handle_image_message(self, from_phone, media_id, message_text, company, session):
+        """
+        Maneja mensajes con imágenes y los procesa como posibles tickets
+        """
+        try:
+            # Obtener usuario
+            user = User.objects.get(whatsapp_number=from_phone)
+            
+            # Inicializar el servicio de WhatsApp
+            self.whatsapp_service = WhatsAppService(
+                api_token=company.whatsapp_api_token,
+                phone_number_id=company.whatsapp_phone_number_id
+            )
+            
+            # NUEVO: Obtener contexto de la conversación reciente
+            conversation_context = self._extract_conversation_context(from_phone)
+            
+            # Descargar la imagen
+            relative_path = self.whatsapp_service.download_media(media_id)
+            if not relative_path:
+                return "Lo siento, no pude procesar tu imagen. Por favor, intenta nuevamente."
+            
+            # Convertir a ruta absoluta para el análisis
+            from django.conf import settings
+            import os
+            absolute_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+            
+            # Verificar que el archivo existe
+            if not os.path.exists(absolute_path):
+                logger.error(f"El archivo descargado no existe: {absolute_path}")
+                return "Lo siento, hubo un problema al procesar la imagen. Por favor, intenta nuevamente."
+            
+            # Procesar la imagen con IA
+            image_service = ImageProcessingService()
+            image_analysis = image_service.analyze_image(absolute_path)
+            
+            # SIMPLIFICADO: Buscar un ticket existente SOLO en la sesión actual
+            active_ticket = None
+            if session:
+                # Buscar un ticket creado en la sesión actual
+                active_ticket = Ticket.objects.filter(
+                    session=session,
+                    user=user,
+                    company=company,
+                    status__in=['new', 'reviewing', 'in_progress']
+                ).order_by('-created_at').first()
+            
+            # Si encontramos un ticket activo en la sesión actual, añadir la imagen a ese ticket
+            if active_ticket:
+                # Añadir imagen al ticket existente
+                ticket_image = TicketImage(
+                    ticket=active_ticket,
+                    image=relative_path,
+                    ai_description=image_analysis
+                )
+                ticket_image.save()
+                
+                # MEJORADO: Actualizar descripción del ticket con contexto de la conversación
+                if message_text or conversation_context:
+                    update_text = []
+                    if message_text:
+                        update_text.append(f"Caption de imagen: {message_text}")
+                    
+                    if conversation_context:
+                        update_text.append(f"Contexto de la conversación: {conversation_context}")
+                    
+                    if update_text:
+                        active_ticket.description += f"\n\n--- Actualización {timezone.now().strftime('%d/%m/%Y %H:%M')} ---\n"
+                        active_ticket.description += "\n".join(update_text)
+                        active_ticket.save()
+                        
+                # Notificar a administradores
+                self.notify_new_image(active_ticket, ticket_image)
+                
+                # Mensaje con información más clara para el usuario
+                if ticket_image.ticket.images.count() > 1:
+                    return (
+                        f"¡Gracias! He añadido esta imagen a tu reporte actual '{active_ticket.title}'. "
+                        f"Ahora tienes {ticket_image.ticket.images.count()} imágenes en este reporte. "
+                        f"Un técnico lo revisará pronto."
+                    )
+                else:
+                    return f"¡Gracias! He añadido esta imagen a tu reporte '{active_ticket.title}'. Un técnico lo revisará pronto."
+                
+            else:
+                # MEJORADO: Usar contexto de conversación para crear la descripción
+                full_description = message_text or ""
+                
+                if conversation_context:
+                    if full_description:
+                        full_description += f"\n\nContexto de la conversación:\n{conversation_context}"
+                    else:
+                        full_description = f"Contexto de la conversación:\n{conversation_context}"
+                
+                if not full_description:
+                    full_description = "Reporte con imagen sin descripción textual"
+                
+                # Crear un nuevo ticket
+                # Determinar categoría basada en el análisis de imagen y texto
+                category = image_service.detect_issue_category(full_description, image_analysis, company.id)
+                
+                # Crear título automático considerando el contexto completo
+                title_prompt = f"Genera un título breve (máximo 10 palabras) para un ticket de soporte basado en esta descripción: '{full_description}' y este análisis de imagen: '{image_analysis[:100]}...'"
+                title = self.openai_service.generate_response(title_prompt, context=None)
+                title = title.replace('"', '').strip()[:200]  # Limpiar y limitar longitud
+                
+                # Crear el ticket
+                ticket = Ticket(
+                    title=title,
+                    description=full_description,
+                    company=company,
+                    category=category,
+                    session=session,
+                    user=user,
+                    status='new'
+                )
+                ticket.save()
+                
+                # Añadir la imagen
+                ticket_image = TicketImage(
+                    ticket=ticket,
+                    image=relative_path,
+                    ai_description=image_analysis
+                )
+                ticket_image.save()
+                
+                # Notificar a administradores
+                self.notify_new_ticket(ticket)
+                
+                # Mensaje más informativo para el usuario
+                return (
+                    f"He creado un nuevo reporte con tu imagen: '{ticket.title}'. "
+                    f"Puedes enviar más fotos o detalles sobre este problema en esta misma conversación "
+                    f"y lo añadiré a este mismo reporte."
+                )
+                
+        except Exception as e:
+            logger.error(f"Error procesando imagen: {e}")
+            import traceback
+            logger.error(traceback.format_exc())  # Añadir stack trace completo
+            return "Lo siento, hubo un problema al procesar tu imagen. Por favor, contacta directamente con soporte."
+    
+    def notify_new_ticket(self, ticket):
+        """Notifica a los administradores sobre un nuevo ticket"""
+        try:
+            from chatbot.services.email_service import EmailService
+            email_service = EmailService()
+            return email_service.send_ticket_notification(ticket)
+        except Exception as e:
+            logger.error(f"Error al notificar sobre nuevo ticket: {e}")
+            return False
+            
+    def notify_new_image(self, ticket, image):
+        """Notifica a los administradores sobre una nueva imagen en un ticket existente"""
+        try:
+            from chatbot.services.email_service import EmailService
+            email_service = EmailService()
+            return email_service.send_ticket_image_notification(ticket, image)
+        except Exception as e:
+            logger.error(f"Error al notificar sobre nueva imagen: {e}")
+            return False
+
+    def _extract_conversation_context(self, user_id, max_messages=5):
+        """
+        Extrae contexto relevante de los mensajes recientes en la conversación
+        
+        Args:
+            user_id: ID del usuario (número de WhatsApp)
+            max_messages: Máximo número de mensajes a considerar
+            
+        Returns:
+            str: Texto con el contexto relevante
+        """
+        try:
+            # Obtener conversación del usuario
+            conversation = self.get_conversation(user_id)
+            if not conversation:
+                return ""
+            
+            # Tomar solo los últimos N mensajes (excluyendo la última imagen)
+            recent_messages = conversation[-max_messages-1:-1] if len(conversation) > max_messages else conversation[:-1]
+            
+            # Si no hay suficientes mensajes, no hay contexto relevante
+            if not recent_messages:
+                return ""
+                
+            # Extraer texto del usuario (ignorar respuestas del bot)
+            user_messages = [msg["content"] for msg in recent_messages if msg["role"] == "user"]
+            
+            # Si no hay mensajes del usuario, no hay contexto relevante
+            if not user_messages:
+                return ""
+                
+            # Unir mensajes del usuario en un solo texto
+            raw_context = "\n".join(user_messages)
+            
+            # Opcional: Usar IA para resumir/extraer lo relevante sobre un problema técnico
+            if len(raw_context) > 200:  # Solo si es un texto largo
+                # Llamada directa a OpenAI sin usar generate_response
+                try:
+                    # Crear prompt para extraer información relevante
+                    summarize_prompt = f"""
+                    Extrae información relevante de esta conversación para un ticket de soporte técnico.
+                    Ignora saludos y conversación trivial, enfócate solo en la descripción del problema.
+                    Si no hay información sobre un problema técnico, responde con "No hay información relevante".
+                    
+                    Conversación:
+                    {raw_context}
+                    """
+                    
+                    # Usar el cliente de OpenAI para resumir el contexto
+                    from openai import OpenAI
+            
+                    # Crear una nueva instancia
+                    client = OpenAI(api_key=self.openai_service.api_key)
+                    
+                    # Llamada directa a la API
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini",  # Modelo más económico para resúmenes
+                        messages=[{"role": "user", "content": summarize_prompt}],
+                        temperature=0.0,  # Sin creatividad, solo análisis objetivo
+                        max_tokens=250    # Respuesta corta y concisa
+                    )
+                    
+                    # Extraer resumen
+                    summary = response.choices[0].message.content.strip()
+                    
+                    if "No hay información relevante" not in summary:
+                        return summary
+                    else:
+                        return ""
+                        
+                except Exception as extract_error:
+                    logger.error(f"Error al resumir contexto con IA: {extract_error}")
+                    # Si falla el resumen, devolver contexto completo
+                    return raw_context
+            else:
+                # Para textos cortos, usar directamente
+                return raw_context
+                
+        except Exception as e:
+            logger.error(f"Error extrayendo contexto de conversación: {e}")
+            return ""

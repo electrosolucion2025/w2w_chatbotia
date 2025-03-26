@@ -3,10 +3,11 @@ from django.urls import reverse, path
 from django.utils.html import format_html
 from django.http import HttpResponseRedirect
 from django.contrib import messages
+from django.utils import timezone
 
 from chatbot.services.conversation_analysis_service import ConversationAnalysisService
 from .models import (
-    Session, Message, User, Company, CompanyInfo, Feedback,
+    Session, Message, Ticket, TicketCategory, TicketComment, TicketImage, User, Company, CompanyInfo, Feedback,
     PolicyAcceptance, PolicyVersion, AudioMessage, UserCompanyInteraction,
     CompanyAdmin as CompanyAdministrator, LeadStatistics
 )
@@ -348,7 +349,6 @@ class CompanyAdmin(admin.ModelAdmin):
     
     def _get_recent_comments_html(self, obj):
         """Obtiene HTML con comentarios recientes"""
-        from django.utils import timezone
         from datetime import timedelta
         
         # Comentarios de los últimos 30 días
@@ -1088,6 +1088,101 @@ class AudioMessageCompanyAdmin(CompanyFilteredAdmin):
     short_transcription.short_description = "Transcription"
     full_transcription.short_description = "Full transcription"
     message_info.short_description = "Message"
+    
+        # admin.py - Añadir estas clases
+class TicketImageInline(admin.TabularInline):
+    model = TicketImage
+    extra = 1
+    readonly_fields = ['image_preview', 'uploaded_at', 'ai_description']
+    fields = ['image', 'image_preview', 'caption', 'ai_description', 'uploaded_at']
+    
+    def image_preview(self, obj):
+        if obj.image:
+            return format_html('<a href="{}" target="_blank"><img src="{}" style="max-height: 150px; max-width: 200px;" /></a>', 
+                                obj.image.url, obj.image.url)
+        return "No image"
+    
+    image_preview.short_description = "Preview"
+
+class TicketCommentInline(admin.TabularInline):
+    model = TicketComment
+    extra = 1
+    fields = ['content', 'author', 'is_staff', 'created_at']
+    readonly_fields = ['created_at']
+
+@admin.register(Ticket)
+class TicketAdmin(CompanyFilteredAdmin):
+    list_display = ['title', 'company', 'category', 'status', 'priority', 'user_info', 'created_at', 'image_count']
+    list_filter = ['status', 'priority', 'category', 'created_at']
+    search_fields = ['title', 'description', 'user__name', 'user__whatsapp_number']
+    readonly_fields = ['created_at', 'updated_at']
+    inlines = [TicketImageInline, TicketCommentInline]
+    actions = ['mark_as_in_progress', 'mark_as_resolved']
+    
+    fieldsets = [
+        ('Información Básica', {
+            'fields': ['title', 'description', 'company', 'category']
+        }),
+        ('Estado', {
+            'fields': ['status', 'priority', 'assigned_to']
+        }),
+        ('Cliente', {
+            'fields': ['user', 'session']
+        }),
+        ('Fechas', {
+            'fields': ['created_at', 'updated_at', 'resolved_at']
+        }),
+    ]
+    
+    def user_info(self, obj):
+        if obj.user:
+            return f"{obj.user.name or 'Sin nombre'} - {obj.user.whatsapp_number}"
+        return "Usuario no disponible"
+    
+    def image_count(self, obj):
+        count = obj.images.count()
+        return format_html('<span style="color: {};">{} {}</span>',
+                            'green' if count > 0 else 'gray',
+                            count,
+                            'imagen' if count == 1 else 'imágenes')
+    
+    def mark_as_in_progress(self, request, queryset):
+        queryset.update(status='in_progress')
+        self.message_user(request, f"{queryset.count()} tickets marcados como En Proceso")
+    
+    def mark_as_resolved(self, request, queryset):
+        from django.utils import timezone
+        queryset.update(status='resolved', resolved_at=timezone.now())
+        self.message_user(request, f"{queryset.count()} tickets marcados como Resueltos")
+    
+    def save_model(self, request, obj, form, change):
+        if change and 'status' in form.changed_data:
+            # Si cambia el estado, crear un comentario automático
+            old_status = Ticket.objects.get(pk=obj.pk).get_status_display()
+            new_status = obj.get_status_display()
+            TicketComment.objects.create(
+                ticket=obj,
+                author=request.user,
+                is_staff=True,
+                content=f"Estado cambiado de '{old_status}' a '{new_status}'"
+            )
+            
+            # Si se resuelve, registrar fecha
+            if obj.status == 'resolved' and not obj.resolved_at:
+                obj.resolved_at = timezone.now()
+        super().save_model(request, obj, form, change)
+    
+    user_info.short_description = "Cliente"
+    image_count.short_description = "Imágenes"
+    mark_as_in_progress.short_description = "Marcar como En Proceso"
+    mark_as_resolved.short_description = "Marcar como Resueltos"
+
+@admin.register(TicketCategory)
+class TicketCategoryAdmin(CompanyFilteredAdmin):
+    list_display = ['name', 'company', 'ask_for_photos']
+    list_filter = ['company', 'ask_for_photos']
+    search_fields = ['name', 'company__name']
+
 
 company_admin_site.register(Session, SessionAdmin)
 company_admin_site.register(Message, MessageAdmin)
@@ -1097,3 +1192,5 @@ company_admin_site.register(DjangoUser)
 company_admin_site.register(User, UserCompanyFilteredAdmin)
 company_admin_site.register(LeadStatistics, LeadStatisticsCompanyAdmin)
 company_admin_site.register(AudioMessage, AudioMessageCompanyAdmin)
+company_admin_site.register(Ticket, TicketAdmin)
+company_admin_site.register(TicketCategory, TicketCategoryAdmin)
