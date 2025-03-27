@@ -88,17 +88,31 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'w2w_chatbotia.wsgi.application'
 
+DATABASE_URL = os.getenv('DATABASE_URL')
+
 # Database - usar DATABASE_URL si está disponible (Railway lo proporciona automáticamente)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
+if ENVIRONMENT == 'production':
+    # En producción, usar DATABASE_URL proporcionado por Railway
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
     }
-}
+else:
+    # En desarrollo, usar configuración local desde .env
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME'),
+            'USER': os.getenv('DB_USER'),
+            'PASSWORD': os.getenv('DB_PASSWORD'),
+            'HOST': os.getenv('DB_HOST'),
+            'PORT': os.getenv('DB_PORT'),
+        }
+    }
 
 # Soporte para DATABASE_URL (proporcionado por Railway)
 DATABASE_URL = os.getenv('DATABASE_URL')
