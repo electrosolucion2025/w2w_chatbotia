@@ -1,0 +1,1 @@
+web: gunicorn w2w_chatbotia.wsgi --bind 0.0.0.0:$PORT
