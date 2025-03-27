@@ -114,15 +114,6 @@ else:
         }
     }
 
-# Soporte para DATABASE_URL (proporcionado por Railway)
-DATABASE_URL = os.getenv('DATABASE_URL')
-if ENVIRONMENT == 'production' and DATABASE_URL:
-    import dj_database_url
-    DATABASES['default'] = dj_database_url.config(
-        default=DATABASE_URL, 
-        conn_max_age=600
-    )
-
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
