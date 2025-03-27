@@ -1,4 +1,6 @@
 import logging
+
+from chatbot.services.whatsapp_service import WhatsAppService
 from ..models import Company, CompanyInfo, User, UserCompanyInteraction
 
 logger = logging.getLogger(__name__)
@@ -123,3 +125,54 @@ class CompanyService:
         except Exception as e:
             logger.error(f"Error recording interaction between {user} and {company}: {e}")
             return None
+        
+    def get_company_user_and_whatsapp_service(self, metadata, from_phone, default_whatsapp=None):
+        """
+        Extrae la información de empresa, usuario y configura el servicio de WhatsApp
+        
+        Args:
+            metadata: Diccionario con los metadatos del mensaje de WhatsApp
+            from_phone: Número de teléfono del remitente
+            default_whatsapp: Instancia por defecto del servicio WhatsApp (opcional)
+            
+        Returns:
+            tuple: (company, user, contact_name, whatsapp_service)
+        """
+        # Extraer el phone_number_id para identificar la empresa
+        phone_number_id = metadata.get("phone_number_id")
+        
+        # Obtener información de contacto del remitente
+        contact_name = None
+        contacts = metadata.get("contacts", [])
+        if contacts and len(contacts) > 0:
+            profile = contacts[0].get("profile", {})
+            contact_name = profile.get("name")
+        
+        # Obtener la empresa asociada al phone_number_id
+        company = self.get_company_by_phone_number_id(phone_number_id)
+        
+        if not company:
+            logger.warning(f"No se encontró empresa para phone_number_id: {phone_number_id}")
+            return None, None, contact_name, default_whatsapp
+            
+        logger.info(f"Found company: {company.name} for phone ID: {phone_number_id}")
+        
+        # Configurar el servicio WhatsApp con las credenciales de la empresa
+        whatsapp = default_whatsapp
+        if company.whatsapp_api_token and company.whatsapp_phone_number_id:
+            whatsapp = WhatsAppService(
+                api_token=company.whatsapp_api_token,
+                phone_number_id=company.whatsapp_phone_number_id
+            )
+        
+        # Obtener o crear el usuario
+        user = self.get_or_create_user(
+            whatsapp_number=from_phone,
+            name=contact_name
+        )
+        
+        if not user:
+            logger.error(f"No se pudo obtener/crear usuario para {from_phone}")
+            return company, None, contact_name, whatsapp
+        
+        return company, user, contact_name, whatsapp

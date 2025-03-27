@@ -96,42 +96,16 @@ def webhook(request):
             if metadata is None:
                 return HttpResponse('OK', status=200)
             
-            # NUEVO: Primero obtener la empresa y la sesión antes de procesar cualquier tipo de mensaje
-            # Extraer el phone_number_id para identificar la empresa
-            phone_number_id = metadata.get("phone_number_id")
-            
-            # Obtener información de contacto del remitente
-            contact_name = None
-            contacts = metadata.get("contacts", [])
-            if contacts and len(contacts) > 0:
-                profile = contacts[0].get("profile", {})
-                contact_name = profile.get("name")
-            
-            # IMPORTANTE: Obtener la empresa ANTES de procesar cualquier tipo de mensaje
-            company = company_service.get_company_by_phone_number_id(phone_number_id)
-            
+            # Obtener empresa, usuario y servicio WhatsApp usando el método centralizado
+            company, user, contact_name, whatsapp = company_service.get_company_user_and_whatsapp_service(
+                metadata, from_phone, default_whatsapp
+            )
+
+            # Verificar si se pudo obtener la empresa y usuario
             if not company:
-                logger.warning(f"No se encontró empresa para phone_number_id: {phone_number_id}")
                 return HttpResponse('OK', status=200)
                 
-            logger.info(f"Found company: {company.name} for phone ID: {phone_number_id}")
-            
-            # Configurar el servicio WhatsApp con las credenciales de la empresa si están disponibles
-            whatsapp = default_whatsapp
-            if company.whatsapp_api_token and company.whatsapp_phone_number_id:
-                whatsapp = WhatsAppService(
-                    api_token=company.whatsapp_api_token,
-                    phone_number_id=company.whatsapp_phone_number_id
-                )
-            
-            # Obtener o crear el usuario
-            user = company_service.get_or_create_user(
-                whatsapp_number=from_phone,
-                name=contact_name
-            )
-            
             if not user:
-                logger.error(f"No se pudo obtener/crear usuario para {from_phone}")
                 return HttpResponse('OK', status=200)
             
             # Obtener o crear la sesión activa
@@ -214,42 +188,18 @@ def webhook(request):
             if not from_phone or not message_text:
                 return HttpResponse('OK', status=200)
             
-            # Extraer el phone_number_id para identificar la empresa
-            phone_number_id = metadata.get("phone_number_id")
-            
-            # Obtener información de contacto del remitente
-            contact_name = None
-            contacts = metadata.get("contacts", [])
-            if contacts and len(contacts) > 0:
-                profile = contacts[0].get("profile", {})
-                contact_name = profile.get("name")
-            
-            # Buscar la empresa asociada a este número
-            company = company_service.get_company_by_phone_number_id(phone_number_id)
-            
-            if not company:
-                logger.warning(f"No se encontró empresa para phone_number_id: {phone_number_id}")
-                return HttpResponse('OK', status=200)
-                
-            logger.info(f"Found company: {company.name} for phone ID: {phone_number_id}")
-            
-            # Configurar el servicio WhatsApp con las credenciales de la empresa si están disponibles
-            whatsapp = default_whatsapp
-            if company.whatsapp_api_token and company.whatsapp_phone_number_id:
-                whatsapp = WhatsAppService(
-                    api_token=company.whatsapp_api_token,
-                    phone_number_id=company.whatsapp_phone_number_id
+            if 'company' not in locals() or not company or 'user' not in locals() or not user:
+                # Obtener empresa, usuario y servicio WhatsApp usando el método centralizado
+                company, user, contact_name, whatsapp = company_service.get_company_user_and_whatsapp_service(
+                    metadata, from_phone, default_whatsapp
                 )
-            
-            # Obtener o crear el usuario
-            user = company_service.get_or_create_user(
-                whatsapp_number=from_phone,
-                name=contact_name
-            )
-            
-            if not user:
-                logger.error(f"No se pudo obtener/crear usuario para {from_phone}")
-                return HttpResponse('OK', status=200)
+                
+                # Verificar si se pudo obtener la empresa y usuario
+                if not company:
+                    return HttpResponse('OK', status=200)
+                    
+                if not user:
+                    return HttpResponse('OK', status=200)
             
             # Verificar si el usuario ya aceptó las políticas
             # Primero, obtén la política activa
@@ -684,23 +634,6 @@ def webhook(request):
             # PROCESAMIENTO DE MENSAJES INTERACTIVOS (BOTONES)
             if metadata.get("type") == "interactive" and "button_id" in metadata:
                 button_id = metadata.get("button_id")
-                
-                # # Manejar botón para ver políticas completas
-                # if button_id == "view_full_policies":
-                #     logger.info(f"Usuario {user.whatsapp_number} solicita ver políticas completas")
-                    
-                #     # Obtener la política activa
-                #     policy = PolicyVersion.objects.filter(active=True).first()
-                #     if not policy:
-                #         whatsapp.send_message(from_phone, "Lo sentimos, no se encontraron las políticas detalladas. Por favor, contacta con soporte.")
-                #         return HttpResponse('OK', status=200)
-                        
-                #     # Enviar políticas detalladas
-                #     responses = whatsapp.send_full_policy_details(from_phone, policy)
-                #     logger.info(f"Enviados {len(responses)} mensajes con detalles de políticas al usuario {user.whatsapp_number}")
-                    
-                #     # No procesar más este mensaje
-                #     return HttpResponse('OK', status=200)
                 
                 # Procesar botones de feedback
                 if button_id in ["positive", "negative", "comment"]:
