@@ -309,7 +309,9 @@ class OpenAIService:
         prompt += "3. Si la información por la que te preguntan es extensa, haz una lista primero y solicita que te pregunten por lo que quieran.\n"
         prompt += "4. Utiliza un tono amable y profesional.\n"
         prompt += "5. Si desconoces la respuesta a una pregunta específica, indícalo amablemente y ofrece poner al cliente en contacto con un asesor.\n"
-        
-        # Resto de instrucciones igual...
-        
+        prompt += "6. Si el cliente desea que se le ponga en contacto con un asesor, pidele su nombre. Tambien puedes preguntarle si tiene algun horario especifico o forma concreta de contactar con él.\n"
+        prompt += "7. Posteriormente informale que el agente se pondra en contacto con él y muestrale los datos de contacto por si es urgente.\n"
+        prompt += "8. Cuando el usuario indique que quiere terminar la conversación o se despida, despídete cordialmente y agradece por utilizar el servicio.\n"
+        prompt += "9. Si deduces que tambien tiene intenciones de dejar la conversación di: Chat finalizado.\n"
+        prompt += "10. Cuando finalice la sesion di: Chat finalizado.\n"
         return prompt

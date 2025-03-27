@@ -184,51 +184,170 @@ class EmailService:
                 return False
                 
             # Preparar contenido del email
-            subject = f"Nuevo ticket: {ticket.title}"
+            severity_level = ticket.priority
+            severity_color = {
+                'low': '#28a745',       # Verde
+                'medium': '#ffc107',    # Amarillo
+                'high': '#dc3545',      # Rojo
+                'urgent': '#721c24'     # Rojo oscuro
+            }.get(severity_level, '#6c757d')  # Gris por defecto
             
-            # Formatear contenido HTML
+            severity_text = {
+                'low': 'BAJA',
+                'medium': 'MEDIA',
+                'high': 'ALTA',
+                'urgent': 'URGENTE'
+            }.get(severity_level, 'NO ESPECIFICADA')
+
+            # Obtener la primera imagen si existe
+            first_image = None
+            image_html = ""
+            
+            if ticket.images.exists():
+                first_image = ticket.images.first()
+                # Crear URL de la imagen (absoluta)
+                image_url = f"{settings.BASE_URL}{first_image.image.url}" if first_image and first_image.image else ""
+                
+                if image_url:
+                    image_html = f"""
+                    <div style="margin: 20px 0; text-align: center;">
+                        <h3>Imagen principal:</h3>
+                        <img src="{image_url}" alt="Imagen del ticket" style="max-width: 100%; max-height: 400px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                    """
+            
+            # Obtener información adicional
+            subject = f"[Ticket #{ticket.id}] {ticket.title}"
+            
+            # Formatear contenido HTML con diseño mejorado
             message_html = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #333; border-bottom: 1px solid #ddd; padding-bottom: 10px;">Nuevo Ticket Recibido</h2>
-                
-                <div style="margin: 20px 0;">
-                    <p><strong>Título:</strong> {ticket.title}</p>
-                    <p><strong>Cliente:</strong> {ticket.user.name or ticket.user.whatsapp_number}</p>
-                    <p><strong>Categoría:</strong> {ticket.category.name if ticket.category else 'Sin categorizar'}</p>
-                    <p><strong>Fecha:</strong> {ticket.created_at.strftime('%d/%m/%Y %H:%M')}</p>
-                    <p><strong>Imágenes:</strong> {ticket.images.count()}</p>
+            <!DOCTYPE html>
+            <html lang="es">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{subject}</title>
+            </head>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; background-color: #f9f9f9; padding: 20px;">
+                <div style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                    <!-- Encabezado con logo y título -->
+                    <div style="background-color: #273c75; color: white; padding: 20px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">Nuevo Ticket de Soporte</h1>
+                        <p style="margin: 5px 0 0 0; font-size: 16px;">ID: #{ticket.id}</p>
+                    </div>
+                    
+                    <!-- Información principal del ticket -->
+                    <div style="padding: 25px;">
+                        <!-- Título y prioridad -->
+                        <div style="margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                            <h2 style="margin: 0; font-size: 20px; color: #273c75;">{ticket.title}</h2>
+                            <div style="display: inline-block; margin-top: 10px; padding: 5px 15px; background-color: {severity_color}; color: white; border-radius: 30px; font-size: 14px; font-weight: bold;">
+                                Prioridad: {severity_text}
+                            </div>
+                        </div>
+                        
+                        <!-- Detalles del ticket en formato de tabla -->
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; width: 30%; font-weight: bold; color: #555;">Cliente:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.user.name or ticket.user.whatsapp_number}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">WhatsApp:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.user.whatsapp_number}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Fecha de creación:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.created_at.strftime('%d/%m/%Y %H:%M')}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Categoría:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.category.name if ticket.category else 'Sin categorizar'}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Estado:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.get_status_display()}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Imágenes adjuntas:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.images.count()}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Empresa:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.company.name}</td>
+                            </tr>
+                        </table>
+                        
+                        <!-- Descripción completa del ticket -->
+                        <div style="margin-bottom: 25px;">
+                            <h3 style="color: #273c75; font-size: 18px; margin-bottom: 10px;">Descripción del problema</h3>
+                            <div style="background-color: #f5f6fa; padding: 15px; border-radius: 8px; border-left: 4px solid #273c75;">
+                                <p style="white-space: pre-line; margin: 0; line-height: 1.7;">{ticket.description}</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Imagen adjunta (si existe) -->
+                        {image_html}
+                        
+                        <!-- Análisis AI de la primera imagen (si existe) -->
+                        {f'''
+                        <div style="margin-bottom: 25px;">
+                            <h3 style="color: #273c75; font-size: 18px; margin-bottom: 10px;">Análisis de la imagen</h3>
+                            <div style="background-color: #f5f6fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db;">
+                                <p style="white-space: pre-line; margin: 0; line-height: 1.7;">{first_image.ai_description}</p>
+                            </div>
+                        </div>
+                        ''' if first_image and hasattr(first_image, 'ai_description') and first_image.ai_description else ''}
+                        
+                        <!-- Botón de acción -->
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" 
+                            style="display: inline-block; background-color: #273c75; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 14px;">
+                                Ver y Gestionar Ticket
+                            </a>
+                        </div>
+                        
+                        <!-- Información de la IA -->
+                        <div style="background-color: #f0f8ff; padding: 15px; border-radius: 8px; margin-top: 25px; font-size: 14px; color: #555;">
+                            <p style="margin: 0;">
+                                <strong>Nota:</strong> Este ticket ha sido generado por un sistema de chatbot AI que ha interpretado la conversación con el cliente.
+                                La categorización y el análisis realizado son preliminares y pueden requerir revisión.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div style="background-color: #f1f2f6; padding: 15px; text-align: center; color: #777; font-size: 13px;">
+                        <p>&copy; {timezone.now().year} W2W Chatbot IA - Todos los derechos reservados.</p>
+                        <p>Este es un mensaje automático. Por favor no responda directamente a este correo.</p>
+                    </div>
                 </div>
-                
-                <div style="background-color: #f7f7f7; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0;">
-                    <h3 style="margin-top: 0;">Descripción:</h3>
-                    <p style="white-space: pre-line;">{ticket.description}</p>
-                </div>
-                
-                <div style="margin-top: 30px;">
-                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/" 
-                       style="background-color: #3498db; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">
-                        Ver detalles del ticket
-                    </a>
-                </div>
-                
-                <p style="color: #777; font-size: 0.8em; margin-top: 30px; border-top: 1px solid #ddd; padding-top: 10px;">
-                    Este es un mensaje automático. Por favor no responda directamente a este correo.
-                </p>
-            </div>
+            </body>
+            </html>
             """
             
-            # Mensaje en texto plano
+            # Mensaje en texto plano como alternativa
             text_content = f"""
-            Nuevo Ticket Recibido
+            TICKET #{ticket.id}: {ticket.title}
             
-            Título: {ticket.title}
+            INFORMACIÓN PRINCIPAL:
+            =====================
             Cliente: {ticket.user.name or ticket.user.whatsapp_number}
+            WhatsApp: {ticket.user.whatsapp_number}
+            Fecha: {ticket.created_at.strftime('%d/%m/%Y %H:%M')}
             Categoría: {ticket.category.name if ticket.category else 'Sin categorizar'}
-            Descripción: {ticket.description}
+            Prioridad: {severity_text}
+            Estado: {ticket.get_status_display()}
+            
+            DESCRIPCIÓN DEL PROBLEMA:
+            ======================
+            {ticket.description}
+            
+            {f'ANÁLISIS AI DE LA IMAGEN:\\n{first_image.ai_description}\\n' if first_image and hasattr(first_image, 'ai_description') and first_image.ai_description else ''}
             
             El ticket incluye {ticket.images.count()} imagen(es).
             
-            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/
+            Ver y gestionar ticket: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/
             """
             
             # Enviar emails a cada destinatario
@@ -238,7 +357,8 @@ class EmailService:
                     to_email=recipient,
                     subject=subject,
                     html_content=message_html,
-                    text_content=text_content
+                    text_content=text_content,
+                    attachment_path=first_image.image.path if first_image and first_image.image else None
                 ):
                     success_count += 1
                     
@@ -247,11 +367,20 @@ class EmailService:
             
         except Exception as e:
             logger.error(f"Error al enviar notificación de ticket: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def send_ticket_image_notification(self, ticket, image):
         """
         Envía una notificación por email cuando se añade una imagen a un ticket existente
+        
+        Args:
+            ticket: Objeto Ticket que recibió la nueva imagen
+            image: Objeto TicketImage con la imagen añadida
+            
+        Returns:
+            bool: True si se envió correctamente, False en caso contrario
         """
         try:
             # Verificar si ya se envió notificación para esta imagen
@@ -265,7 +394,6 @@ class EmailService:
             # Marcar como enviada (con TTL de 24 horas)
             cache.set(cache_key, True, 60 * 60 * 24)
             
-            # Resto del código para enviar el email...
             # Verificar destinatarios
             admin_emails = self._get_admin_emails_for_company(ticket.company)
             
@@ -273,45 +401,169 @@ class EmailService:
                 logger.warning(f"No se puede enviar notificación de imagen para ticket {ticket.id} porque no hay destinatarios")
                 return False
                 
-            # Preparar contenido del email
-            subject = f"Nueva imagen en ticket: {ticket.title}"
+            # Preparar información del ticket
+            severity_level = ticket.priority
+            severity_color = {
+                'low': '#28a745',       # Verde
+                'medium': '#ffc107',    # Amarillo
+                'high': '#dc3545',      # Rojo
+                'urgent': '#721c24'     # Rojo oscuro
+            }.get(severity_level, '#6c757d')  # Gris por defecto
             
-            # Formatear contenido HTML
+            severity_text = {
+                'low': 'BAJA',
+                'medium': 'MEDIA',
+                'high': 'ALTA',
+                'urgent': 'URGENTE'
+            }.get(severity_level, 'NO ESPECIFICADA')
+            
+            # Preparar URL de imagen y miniatura
+            image_url = ""
+            if image and image.image:
+                image_url = f"{settings.BASE_URL}{image.image.url}"
+            
+            # Preparar asunto del correo
+            subject = f"[Ticket #{ticket.id}] Nueva imagen añadida - {ticket.title}"
+
+            # Formatear contenido HTML con diseño mejorado
             message_html = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #333; border-bottom: 1px solid #ddd; padding-bottom: 10px;">Nueva Imagen en Ticket Existente</h2>
-                
-                <div style="margin: 20px 0;">
-                    <p><strong>Ticket:</strong> {ticket.title}</p>
-                    <p><strong>Cliente:</strong> {ticket.user.name or ticket.user.whatsapp_number}</p>
-                    <p><strong>Imágenes totales:</strong> {ticket.images.count()}</p>
+            <!DOCTYPE html>
+            <html lang="es">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{subject}</title>
+            </head>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; background-color: #f9f9f9; padding: 20px;">
+                <div style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                    <!-- Encabezado con logo y título -->
+                    <div style="background-color: #3498db; color: white; padding: 20px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">Nueva Imagen en Ticket</h1>
+                        <p style="margin: 5px 0 0 0; font-size: 16px;">ID: #{ticket.id}</p>
+                    </div>
+                    
+                    <!-- Información principal del ticket -->
+                    <div style="padding: 25px;">
+                        <!-- Aviso destacado -->
+                        <div style="background-color: #f8f9fc; border-left: 4px solid #3498db; padding: 15px; margin-bottom: 25px;">
+                            <p style="margin: 0; font-size: 16px;">
+                                <strong>Actualización:</strong> Se ha añadido una nueva imagen al ticket <strong>#{ticket.id}</strong>.
+                            </p>
+                        </div>
+                    
+                        <!-- Título y prioridad -->
+                        <div style="margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                            <h2 style="margin: 0; font-size: 20px; color: #273c75;">{ticket.title}</h2>
+                            <div style="display: inline-block; margin-top: 10px; padding: 5px 15px; background-color: {severity_color}; color: white; border-radius: 30px; font-size: 14px; font-weight: bold;">
+                                Prioridad: {severity_text}
+                            </div>
+                        </div>
+                        
+                        <!-- Detalles del ticket en formato de tabla -->
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; width: 30%; font-weight: bold; color: #555;">Cliente:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.user.name or ticket.user.whatsapp_number}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">WhatsApp:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.user.whatsapp_number}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Estado del ticket:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.get_status_display()}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Imágenes totales:</td>
+                                <td style="padding: 10px; border-bottom: 1px solid #eee;">{ticket.images.count()}</td>
+                            </tr>
+                        </table>
+                        
+                        <!-- Nueva imagen -->
+                        <div style="margin-bottom: 25px;">
+                            <h3 style="color: #273c75; font-size: 18px; margin-bottom: 10px;">Nueva Imagen Añadida</h3>
+                            <div style="text-align: center; background-color: #f5f6fa; padding: 20px; border-radius: 8px;">
+                                <img src="{image_url}" alt="Nueva imagen del ticket" style="max-width: 100%; max-height: 400px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px;">
+                            </div>
+                        </div>
+                        
+                        <!-- Análisis AI de la imagen -->
+                        {f'''
+                        <div style="margin-bottom: 25px;">
+                            <h3 style="color: #273c75; font-size: 18px; margin-bottom: 10px;">Análisis de la imagen</h3>
+                            <div style="background-color: #f5f6fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db;">
+                                <p style="white-space: pre-line; margin: 0; line-height: 1.7;">{image.ai_description}</p>
+                            </div>
+                        </div>
+                        ''' if hasattr(image, 'ai_description') and image.ai_description else ''}
+                        
+                        <!-- Botones de acción -->
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" 
+                            style="display: inline-block; background-color: #273c75; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 14px; margin-right: 10px;">
+                                Gestionar Ticket
+                            </a>
+                            
+                            <a href="{settings.BASE_URL}/admin/chatbot/ticketimage/{image.id}/change/" 
+                            style="display: inline-block; background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 14px;">
+                                Ver Detalles de Imagen
+                            </a>
+                        </div>
+                        
+                        <!-- Resumen del ticket -->
+                        <div style="background-color: #f8f9fc; padding: 15px; border-radius: 8px; margin-top: 25px; font-size: 14px; border-left: 4px solid #273c75;">
+                            <h4 style="margin-top: 0; color: #273c75;">Resumen del Ticket</h4>
+                            <p style="white-space: pre-line; margin: 0; line-height: 1.7;">
+                                {ticket.description[:300]}{"..." if len(ticket.description) > 300 else ""}
+                            </p>
+                            <p style="margin-top: 10px;">
+                                <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" style="color: #3498db; text-decoration: none; font-weight: bold;">
+                                    Ver descripción completa →
+                                </a>
+                            </p>
+                        </div>
+                        
+                        <!-- Información de la IA -->
+                        <div style="background-color: #f0f8ff; padding: 15px; border-radius: 8px; margin-top: 25px; font-size: 14px; color: #555;">
+                            <p style="margin: 0;">
+                                <strong>Nota:</strong> Esta notificación ha sido generada por un sistema de chatbot AI.
+                                El análisis de la imagen es preliminar y puede requerir revisión.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div style="background-color: #f1f2f6; padding: 15px; text-align: center; color: #777; font-size: 13px;">
+                        <p>&copy; {timezone.now().year} W2W Chatbot IA - Todos los derechos reservados.</p>
+                        <p>Este es un mensaje automático. Por favor no responda directamente a este correo.</p>
+                    </div>
                 </div>
-                
-                <div style="background-color: #f7f7f7; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0;">
-                    <h3 style="margin-top: 0;">Descripción de la imagen:</h3>
-                    <p style="white-space: pre-line;">{image.ai_description[:500]}</p>
-                </div>
-                
-                <div style="margin-top: 30px;">
-                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/" 
-                    style="background-color: #3498db; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">
-                        Ver detalles del ticket
-                    </a>
-                </div>
-            </div>
+            </body>
+            </html>
             """
             
-            # Mensaje en texto plano
+            # Mensaje en texto plano como alternativa
             text_content = f"""
-            Nueva imagen en ticket: {ticket.title}
+            NUEVA IMAGEN AÑADIDA AL TICKET #{ticket.id}: {ticket.title}
             
+            INFORMACIÓN DEL TICKET:
+            =====================
             Cliente: {ticket.user.name or ticket.user.whatsapp_number}
+            WhatsApp: {ticket.user.whatsapp_number}
+            Estado: {ticket.get_status_display()}
+            Prioridad: {severity_text}
             Imágenes totales: {ticket.images.count()}
             
-            Descripción de la nueva imagen:
-            {image.ai_description[:500]}
+            ANÁLISIS DE LA NUEVA IMAGEN:
+            ======================
+            {image.ai_description if hasattr(image, 'ai_description') and image.ai_description else "No hay análisis disponible"}
             
-            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/
+            RESUMEN DEL TICKET:
+            ======================
+            {ticket.description[:300]}{"..." if len(ticket.description) > 300 else ""}
+            
+            Ver y gestionar ticket: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/
+            Ver detalles de la imagen: {settings.BASE_URL}/admin/chatbot/ticketimage/{image.id}/change/
             """
             
             # Enviar emails a cada destinatario
@@ -321,15 +573,18 @@ class EmailService:
                     to_email=recipient,
                     subject=subject,
                     html_content=message_html,
-                    text_content=text_content
+                    text_content=text_content,
+                    attachment_path=image.image.path if image and image.image else None
                 ):
                     success_count += 1
                     
-            logger.info(f"Notificación de imagen enviada a {success_count} de {len(admin_emails)} destinatarios")
+            logger.info(f"Notificación de nueva imagen enviada a {success_count} de {len(admin_emails)} destinatarios")
             return success_count > 0
             
         except Exception as e:
             logger.error(f"Error al enviar notificación de imagen: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def _get_admin_emails_for_company(self, company):
@@ -363,19 +618,7 @@ class EmailService:
                   cc: List[str] = None, bcc: List[str] = None,
                   attachment_path: str = None) -> bool:
         """
-        Envía un email usando SendGrid
-        
-        Args:
-            to_email (str): Email del destinatario
-            subject (str): Asunto del email
-            html_content (str): Contenido HTML del email
-            text_content (str, optional): Contenido texto plano alternativo
-            cc (List[str], optional): Lista de emails para CC
-            bcc (List[str], optional): Lista de emails para BCC
-            attachment_path (str, optional): Ruta al archivo adjunto
-            
-        Returns:
-            bool: True si se envió correctamente, False en caso contrario
+        Envía un email usando SendGrid con soporte mejorado para adjuntos
         """
         try:
             sg = SendGridAPIClient(self.api_key)
@@ -396,34 +639,31 @@ class EmailService:
                 html_content=Content("text/html", html_content)
             )
             
-            # # Añadir CC si existe
-            # if cc:
-            #     personalization = Personalization()
-            #     for cc_email in cc:
-            #         personalization.add_cc(Email(cc_email))
-            #     message.add_personalization(personalization)
-            
-            # # Añadir BCC si existe
-            # if bcc:
-            #     personalization = Personalization()
-            #     for bcc_email in bcc:
-            #         personalization.add_bcc(Email(bcc_email))
-            #     message.add_personalization(personalization)
-            
-            # # Añadir adjunto si existe
-            # if attachment_path:
-            #     import base64
-            #     attachment_filename = attachment_path.split('/')[-1]
-            #     with open(attachment_path, 'rb') as f:
-            #         data = base64.b64encode(f.read()).decode()
+            # Añadir adjunto si existe
+            if attachment_path and os.path.exists(attachment_path):
+                import base64
+                from sendgrid.helpers.mail import (Attachment, FileContent, FileName, FileType, Disposition)
+                
+                attachment_filename = os.path.basename(attachment_path)
+                with open(attachment_path, 'rb') as f:
+                    encoded_file = base64.b64encode(f.read()).decode()
                     
-            #         attachment = Attachment()
-            #         attachment.file_content = FileContent(data)
-            #         attachment.file_type = FileType('application/octet-stream')
-            #         attachment.file_name = FileName(attachment_filename)
-            #         attachment.disposition = Disposition('attachment')
+                    attachment = Attachment()
+                    attachment.file_content = FileContent(encoded_file)
                     
-            #         message.add_attachment(attachment)
+                    # Detectar tipo de archivo
+                    mime_type = "application/octet-stream"  # Valor por defecto
+                    if attachment_path.lower().endswith(('.jpg', '.jpeg')):
+                        mime_type = "image/jpeg"
+                    elif attachment_path.lower().endswith('.png'):
+                        mime_type = "image/png"
+                    elif attachment_path.lower().endswith('.pdf'):
+                        mime_type = "application/pdf"
+                    
+                    attachment.file_type = FileType(mime_type)
+                    attachment.file_name = FileName(attachment_filename)
+                    attachment.disposition = Disposition('attachment')
+                    message.attachment = attachment
             
             # Enviar email
             response = sg.send(message)
@@ -437,5 +677,7 @@ class EmailService:
                 return False
                 
         except Exception as e:
-            logger.error(f"Error en SendGridService.send_email: {e}")
+            logger.error(f"Error en EmailService.send_email: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False

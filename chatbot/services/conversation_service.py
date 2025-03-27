@@ -111,6 +111,13 @@ class ConversationService:
                 logger.warning(f"Imagen duplicada detectada: {media_id}. Ignorando.")
                 return "Estoy procesando tu imagen, dame un momento..."
             
+            # VERIFICACIÓN DE SESIÓN CERRADA
+            # ==============================
+            # Verificar si la sesión está cerrada antes de continuar
+            if session and hasattr(session, 'is_closed') and session.is_closed:
+                logger.warning(f"No se procesará la imagen {media_id} para el usuario {from_phone} porque la sesión {session.id} está cerrada")
+                return "Lo siento, tu sesión anterior ha finalizado. Inicia una nueva conversación para enviar imágenes."
+            
             # Marcar como en proceso (con TTL de 1 hora)
             cache.set(cache_key, True, 60 * 60)
             
@@ -165,62 +172,76 @@ class ConversationService:
                     status__in=['new', 'reviewing', 'in_progress']
                 ).order_by('-created_at').first()
             
+                # VERIFICACIÓN ADICIONAL: Si tenemos un ticket activo, verificar que su sesión no esté cerrada
+                if active_ticket and active_ticket.session and hasattr(active_ticket.session, 'is_closed') and active_ticket.session.is_closed:
+                    logger.warning(f"No se añadirá la imagen al ticket {active_ticket.id} porque su sesión {active_ticket.session.id} está cerrada")
+                    # Forzar la creación de un nuevo ticket
+                    active_ticket = None
+            
             # Si encontramos un ticket activo en la sesión actual, añadir la imagen a ese ticket
             if active_ticket:
-                # Añadir imagen al ticket existente
-                ticket_image = TicketImage(
-                    ticket=active_ticket,
-                    image=relative_path,
-                    ai_description=image_analysis,
-                    whatsapp_media_id=media_id  # Añadir este campo
-                )
-                
-                # Intentar guardar, manejar error de duplicado
-                try:
-                    ticket_image.save()
-                except IntegrityError:
-                    logger.warning(f"Esta imagen ya existe para el ticket {active_ticket.id}")
-                    return "Esta imagen ya ha sido procesada para el ticket actual."
-                
-                # MEJORADO: Actualizar descripción del ticket con contexto de la conversación
-                if message_text or conversation_context:
-                    update_text = []
-                    if message_text:
-                        update_text.append(f"Caption de imagen: {message_text}")
-                    
-                    if conversation_context:
-                        update_text.append(f"Contexto de la conversación: {conversation_context}")
-                    
-                    if update_text:
-                        active_ticket.description += f"\n\n--- Actualización {timezone.now().strftime('%d/%m/%Y %H:%M')} ---\n"
-                        active_ticket.description += "\n".join(update_text)
-                        active_ticket.save()
-                        
-                # Re-analizar con el prompt específico de la categoría
-                if active_ticket.category:
-                    detailed_analysis = image_service.analyze_image(
-                        absolute_path,
-                        company_id=company.id,
-                        category_id=active_ticket.category.id
-                    )
-                    
-                    # Actualizar la descripción de la imagen si es más detallada
-                    if len(detailed_analysis) > len(image_analysis):
-                        ticket_image.ai_description = detailed_analysis
-                        ticket_image.save()
-                        
-                # Notificar a administradores
-                self.notify_new_image(active_ticket, ticket_image)
-                
-                # Mensaje con información más clara para el usuario
-                if ticket_image.ticket.images.count() > 1:
-                    response_message = (
-                        f"¡Gracias! He añadido esta imagen a tu reporte actual '{active_ticket.title}'. "
-                        f"Ahora tienes {ticket_image.ticket.images.count()} imágenes en este reporte. "
-                        f"Un técnico lo revisará pronto."
-                    )
+                # Verificar que la sesión del ticket esté activa (doble verificación)
+                if active_ticket.session and hasattr(active_ticket.session, 'is_closed') and active_ticket.session.is_closed:
+                    # Evitar añadir a ticket con sesión cerrada
+                    logger.warning(f"No se añadirá la imagen al ticket {active_ticket.id} debido a sesión cerrada")
+                    # Crear nuevo ticket en lugar de añadir al existente
+                    active_ticket = None
                 else:
-                    response_message = f"¡Gracias! He añadido esta imagen a tu reporte '{active_ticket.title}'. Un técnico lo revisará pronto."
+                    # La sesión está activa, añadir imagen al ticket existente
+                    # RESTO DEL CÓDIGO EXISTENTE para añadir imagen...
+                    ticket_image = TicketImage(
+                        ticket=active_ticket,
+                        image=relative_path,
+                        ai_description=image_analysis,
+                        whatsapp_media_id=media_id  # Añadir este campo
+                    )
+                    
+                    # Intentar guardar, manejar error de duplicado
+                    try:
+                        ticket_image.save()
+                    except IntegrityError:
+                        logger.warning(f"Esta imagen ya existe para el ticket {active_ticket.id}")
+                        return "Esta imagen ya ha sido procesada para el ticket actual."
+                    
+                    # MEJORADO: Actualizar descripción del ticket con contexto de la conversación
+                    if message_text or conversation_context:
+                        update_text = []
+                        if message_text:
+                            update_text.append(f"Caption de imagen: {message_text}")
+                        
+                        if conversation_context:
+                            update_text.append(f"Contexto de la conversación: {conversation_context}")
+                        
+                        if update_text:
+                            active_ticket.description += f"\n\n--- Actualización {timezone.now().strftime('%d/%m/%Y %H:%M')} ---\n"
+                            active_ticket.description += "\n".join(update_text)
+                            active_ticket.save()
+                            
+                    # Re-analizar con el prompt específico de la categoría
+                    if active_ticket.category:
+                        detailed_analysis = image_service.analyze_image(
+                            absolute_path,
+                            company_id=company.id,
+                            category_id=active_ticket.category.id
+                        )
+                        
+                        # Actualizar la descripción de la imagen si es más detallada
+                        if len(detailed_analysis) > len(image_analysis):
+                            ticket_image.ai_description = detailed_analysis
+                            ticket_image.save()
+                            
+                    # Notificar a administradores
+                    self.notify_new_image(active_ticket, ticket_image)
+                    
+                    # Mensaje con información más clara para el usuario
+                    if ticket_image.ticket.images.count() > 1:
+                        response_message = (
+                            f"¡Gracias! He añadido esta imagen a tu reporte actual '{active_ticket.title}'. "
+                            f"Ahora tienes {ticket_image.ticket.images.count()} imágenes en este reporte. "
+                            f"Un técnico lo revisará pronto."
+                        )
+                    else:
+                        response_message = f"¡Gracias! He añadido esta imagen a tu reporte '{active_ticket.title}'. Un técnico lo revisará pronto."
                 
             else:
                 # MEJORADO: Usar contexto de conversación para crear la descripción

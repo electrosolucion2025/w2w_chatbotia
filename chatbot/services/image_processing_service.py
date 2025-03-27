@@ -327,7 +327,7 @@ class ImageProcessingService:
             from openai import OpenAI
             client = OpenAI()
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
                 temperature=0.1  # Baja temperatura para decisiones más consistentes
