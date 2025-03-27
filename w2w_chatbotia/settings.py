@@ -61,7 +61,16 @@ ROOT_URLCONF = 'w2w_chatbotia.urls'
 # Actualizar CSRF_TRUSTED_ORIGINS para incluir dominio de Railway
 CSRF_TRUSTED_ORIGINS = [
     'https://c863-88-24-196-16.ngrok-free.app',
+    'https://w2wchatbotia.up.railway.app'
 ]
+
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+
+if ENVIRONMENT == 'production':
+    SECURE_HSTS_SECONDS = 31536000  # Un año
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 # Añadir dominio de Railway si estamos en producción
 if ENVIRONMENT == 'production':
