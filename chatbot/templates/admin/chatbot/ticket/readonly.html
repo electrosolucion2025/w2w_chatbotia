@@ -1,0 +1,58 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block content %}
+<div id="content-main">
+    <h1>{{ title }}</h1>
+    
+    <div class="module">
+        <h2>Información del Ticket</h2>
+        <table>
+            <tr>
+                <th>Título:</th>
+                <td>{{ ticket.title }}</td>
+            </tr>
+            <tr>
+                <th>Cliente:</th>
+                <td>{{ ticket.user.name|default:ticket.user.whatsapp_number }}</td>
+            </tr>
+            <tr>
+                <th>Categoría:</th>
+                <td>{{ ticket.category.name|default:"Sin categorizar" }}</td>
+            </tr>
+            <tr>
+                <th>Estado:</th>
+                <td>{{ ticket.get_status_display }}</td>
+            </tr>
+            <tr>
+                <th>Fecha de creación:</th>
+                <td>{{ ticket.created_at }}</td>
+            </tr>
+        </table>
+    </div>
+    
+    <div class="module">
+        <h2>Descripción</h2>
+        <div style="white-space: pre-line;">{{ ticket.description }}</div>
+    </div>
+    
+    {% if images %}
+    <div class="module">
+        <h2>Imágenes ({{ images|length }})</h2>
+        {% for image in images %}
+        <div class="ticket-image" style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;">
+            <img src="/media/{{ image.image }}" alt="Imagen de ticket" style="max-width: 100%; max-height: 300px;">
+            <h3>Análisis IA</h3>
+            <div style="white-space: pre-line;">{{ image.ai_description }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    {% if has_change_permission %}
+    <div style="margin-top: 20px;">
+        <a href="{% url 'admin:chatbot_ticket_change' ticket.id %}" class="button">Editar ticket</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

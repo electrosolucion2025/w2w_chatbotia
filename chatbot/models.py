@@ -562,6 +562,15 @@ class TicketImage(models.Model):
     caption = models.CharField(max_length=255, blank=True, null=True)
     ai_description = models.TextField(blank=True, null=True, help_text="Descripción generada por IA de lo que muestra la imagen")
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    whatsapp_media_id = models.CharField(
+        max_length=255, 
+        null=True, 
+        blank=True,
+        db_index=True
+    )
+    
+    class Meta:
+        unique_together = [['ticket', 'whatsapp_media_id']]
     
     def __str__(self):
         return f"Imagen para {self.ticket.title}"
@@ -580,3 +589,70 @@ class TicketComment(models.Model):
     
     def __str__(self):
         return f"Comentario en {self.ticket.title} por {self.author}"
+    
+class ImageAnalysisPrompt(models.Model):
+    """Plantilla de prompt para análisis de imágenes"""
+    
+    company = models.ForeignKey(
+        'Company', 
+        on_delete=models.CASCADE,
+        related_name='image_prompts',
+        help_text="Empresa a la que pertenece este prompt"
+    )
+    
+    category = models.ForeignKey(
+        'TicketCategory', 
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='image_prompts',
+        help_text="Categoría específica (opcional)"
+    )
+    
+    name = models.CharField(
+        max_length=100,
+        help_text="Nombre descriptivo de este prompt"
+    )
+    
+    prompt_text = models.TextField(
+        help_text="Texto del prompt para analizar imágenes"
+    )
+    
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Indica si es el prompt predeterminado para la empresa"
+    )
+    
+    model = models.CharField(
+        max_length=50,
+        default="gpt-4o",
+        help_text="Modelo de IA a utilizar"
+    )
+    
+    max_tokens = models.IntegerField(
+        default=500,
+        help_text="Tokens máximos para la respuesta"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [['company', 'category', 'is_default']]
+        verbose_name = "Prompt de Análisis de Imagen"
+        verbose_name_plural = "Prompts de Análisis de Imagen"
+        
+    def __str__(self):
+        if self.category:
+            return f"{self.company.name} - {self.category.name}: {self.name}"
+        return f"{self.company.name} - Default: {self.name}"
+        
+    def save(self, *args, **kwargs):
+        # Si se marca como default, desmarcar otros defaults para esta combinación
+        if self.is_default:
+            ImageAnalysisPrompt.objects.filter(
+                company=self.company,
+                category=self.category,
+                is_default=True
+            ).exclude(id=self.id).update(is_default=False)
+        super().save(*args, **kwargs)

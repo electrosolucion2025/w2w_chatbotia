@@ -4,6 +4,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.core.cache import cache as django_cache  # Renombrado para evitar confusiones
 
 from .services.whatsapp_service import WhatsAppService
 from .services.conversation_service import ConversationService
@@ -56,8 +57,153 @@ def webhook(request):
             # Inicializar servicio de WhatsApp por defecto
             default_whatsapp = WhatsAppService()
             
-            # Parsear el mensaje entrante
+            # PASO 1: Deduplicación temprana basada en ID de mensaje
+            try:
+                # Extraer datos del cuerpo del webhook
+                entry = body.get('entry', [{}])[0]
+                change = entry.get('changes', [{}])[0]
+                value = change.get('value', {})
+                
+                # Verificar si es una actualización de estado
+                if 'statuses' in value:
+                    logger.info("Recibida actualización de estado, no un mensaje")
+                    return HttpResponse('OK', status=200)
+                
+                # Verificar si hay mensajes
+                messages = value.get('messages', [])
+                if not messages:
+                    logger.info("Webhook sin mensajes")
+                    return HttpResponse('OK', status=200)
+                    
+                # Verificar ID del primer mensaje
+                message_id = messages[0].get('id')
+                if message_id:
+                    cache_key = f"processed_message_{message_id}"
+                    if django_cache.get(cache_key):  # Usar django_cache aquí
+                        logger.warning(f"Mensaje duplicado con ID: {message_id}. Ignorando.")
+                        return HttpResponse('Duplicado ignorado', status=200)
+                    
+                    # Marcar como procesado
+                    django_cache.set(cache_key, True, 60 * 60 * 24)  # Y aquí también
+            except Exception as e:
+                # Si hay error en esta parte, seguir con el procesamiento normal
+                logger.error(f"Error en deduplicación inicial: {e}")
+            
+            # PASO 2: Parsear el mensaje con el servicio WhatsApp
             from_phone, message_text, message_id, metadata = default_whatsapp.parse_webhook_message(body)
+            
+            # Si metadata es None, es probable que sea una actualización de estado u otro tipo de webhook
+            if metadata is None:
+                return HttpResponse('OK', status=200)
+            
+            # NUEVO: Primero obtener la empresa y la sesión antes de procesar cualquier tipo de mensaje
+            # Extraer el phone_number_id para identificar la empresa
+            phone_number_id = metadata.get("phone_number_id")
+            
+            # Obtener información de contacto del remitente
+            contact_name = None
+            contacts = metadata.get("contacts", [])
+            if contacts and len(contacts) > 0:
+                profile = contacts[0].get("profile", {})
+                contact_name = profile.get("name")
+            
+            # IMPORTANTE: Obtener la empresa ANTES de procesar cualquier tipo de mensaje
+            company = company_service.get_company_by_phone_number_id(phone_number_id)
+            
+            if not company:
+                logger.warning(f"No se encontró empresa para phone_number_id: {phone_number_id}")
+                return HttpResponse('OK', status=200)
+                
+            logger.info(f"Found company: {company.name} for phone ID: {phone_number_id}")
+            
+            # Configurar el servicio WhatsApp con las credenciales de la empresa si están disponibles
+            whatsapp = default_whatsapp
+            if company.whatsapp_api_token and company.whatsapp_phone_number_id:
+                whatsapp = WhatsAppService(
+                    api_token=company.whatsapp_api_token,
+                    phone_number_id=company.whatsapp_phone_number_id
+                )
+            
+            # Obtener o crear el usuario
+            user = company_service.get_or_create_user(
+                whatsapp_number=from_phone,
+                name=contact_name
+            )
+            
+            if not user:
+                logger.error(f"No se pudo obtener/crear usuario para {from_phone}")
+                return HttpResponse('OK', status=200)
+            
+            # Obtener o crear la sesión activa
+            session = session_service.get_or_create_session(user, company)
+            
+            # PASO 3: Procesamiento específico según tipo de mensaje
+            message_type = metadata.get("type", "unknown")
+            
+            # Para imágenes, verificar duplicación específica
+            if message_type == "image":
+                media_id = None
+                
+                # Extraer media_id según la estructura
+                if "image" in metadata:
+                    media_id = metadata["image"].get("id")
+                    caption = metadata["image"].get("caption", "")
+                else:
+                    media_obj = metadata.get("media", {})
+                    media_id = media_obj.get("id") or metadata.get("media_id")
+                    caption = media_obj.get("caption", "") or metadata.get("caption", "")
+                
+                if media_id:
+                    # Verificar duplicación de imagen
+                    img_cache_key = f"processed_image_{media_id}_{from_phone}"
+                    if django_cache.get(img_cache_key):  # Usar django_cache aquí
+                        logger.warning(f"Imagen duplicada: {media_id}. Ignorando.")
+                        return HttpResponse('OK', status=200)
+                    
+                    # Marcar como procesada
+                    django_cache.set(img_cache_key, True, 60 * 60 * 24)  # Y aquí también
+            
+                    # Procesar imagen como potencial ticket
+                    response = conversation_service.handle_image_message(
+                        from_phone=from_phone,
+                        media_id=media_id,
+                        message_text=caption,
+                        company=company,
+                        session=session
+                    )
+                    
+                    # Enviar respuesta
+                    whatsapp.send_message(from_phone, response)
+                    
+                    # Guardar mensaje en BD
+                    Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=caption or "[Imagen sin texto]",
+                        message_type="image",
+                        is_from_user=True
+                    )
+                    
+                    Message.objects.create(
+                        company=company,
+                        session=session,
+                        user=user,
+                        message_text=response,
+                        message_type="text",
+                        is_from_user=False
+                    )
+                    
+                    return HttpResponse('OK', status=200)
+            
+            # NUEVO: Segunda verificación en caso de que el ID se extraiga aquí
+            if message_id and not from_phone:
+                # Es probablemente una actualización de estado, verificar duplicado
+                cache_key = f"processed_status_{message_id}"
+                if django_cache.get(cache_key):  # Usar django_cache aquí
+                    logger.info(f"Actualización de estado duplicada: {message_id}")
+                    return HttpResponse('OK', status=200)
+                django_cache.set(cache_key, True, 60 * 60 * 6)  # Y aquí también
             
             # Verificar primero si es una respuesta de feedback
             if message_text and is_feedback_response(message_text, from_phone):
@@ -334,7 +480,7 @@ def webhook(request):
                         # Generar mensaje de bienvenida del bot
                         welcome_response = conversation_service.generate_response(
                             user_id=from_phone,
-                            message="", 
+                            message="Hola", 
                             company_info=company_info,
                             language_code=language_code,
                             is_first_message=True,
@@ -519,56 +665,6 @@ def webhook(request):
                 
                 return HttpResponse('OK', status=200)
 
-            # AÑADIR AQUÍ: Manejar mensajes de imagen
-            elif message_type == "image":
-                # En algunas versiones de la API, la estructura puede ser diferente
-                if "image" in metadata:
-                    media_id = metadata["image"].get("id")
-                    caption = metadata["image"].get("caption", "")
-                else:
-                    # Intentar buscar en otras ubicaciones comunes
-                    media_obj = metadata.get("media", {})
-                    media_id = media_obj.get("id") or metadata.get("media_id")
-                    caption = media_obj.get("caption", "") or metadata.get("caption", "")
-
-                logger.info(f"Imagen recibida con ID: {media_id}, caption: {caption}")
-                
-                if media_id:
-                    # Procesar imagen como potencial ticket
-                    response = conversation_service.handle_image_message(
-                        from_phone=from_phone,
-                        media_id=media_id,
-                        message_text=caption,
-                        company=company,
-                        session=session
-                    )
-                    
-                    # Enviar respuesta
-                    whatsapp.send_message(from_phone, response)
-                    
-                    # Guardar mensaje en BD (tanto la recepción como la respuesta)
-                    Message.objects.create(
-                        company=company,
-                        session=session,
-                        user=user,
-                        message_text=caption or "[Imagen sin texto]",
-                        message_type="image",
-                        is_from_user=True
-                    )
-                    
-                    Message.objects.create(
-                        company=company,
-                        session=session,
-                        user=user,
-                        message_text=response,
-                        message_type="text",
-                        is_from_user=False
-                    )
-                    
-                    message_text = f"[Imagen procesada: {media_id}] {caption or ''}"
-                    
-                    return HttpResponse('OK', status=200)
-
             # PROCESAMIENTO DE MENSAJES INTERACTIVOS (BOTONES)
             if metadata.get("type") == "interactive" and "button_id" in metadata:
                 button_id = metadata.get("button_id")
@@ -628,7 +724,7 @@ def webhook(request):
                         # Marcar que estamos esperando un comentario
                         from django.core.cache import cache
                         cache_key = f"waiting_feedback_comment_{from_phone}"
-                        cache.set(cache_key, recent_session.id, 60*30)  # Esperar comentario por 30 minutos
+                        django_cache.set(cache_key, recent_session.id, 60*30)  # Esperar comentario por 30 minutos
                     
                     return HttpResponse('OK', status=200)
                 
@@ -753,7 +849,7 @@ def is_feedback_response(message, phone_number=None):
     if phone_number:
         from django.core.cache import cache
         cache_key = f"waiting_feedback_comment_{phone_number}"
-        waiting_session_id = cache.get(cache_key)
+        waiting_session_id = django_cache.get(cache_key)  # Usar django_cache aquí
         
         if waiting_session_id:
             # Estamos esperando un comentario, tratar cualquier mensaje como feedback
@@ -798,7 +894,7 @@ def handle_feedback_response(phone_number, feedback_message):
             
         # Verificar si estamos esperando un comentario
         cache_key = f"waiting_feedback_comment_{phone_number}"
-        waiting_session_id = cache.get(cache_key)
+        waiting_session_id = django_cache.get(cache_key)  # Usar django_cache aquí
         
         # Obtener la sesión relevante
         session = None
@@ -813,7 +909,7 @@ def handle_feedback_response(phone_number, feedback_message):
                 response_message = "¡Gracias por tu comentario! Lo tendremos en cuenta para seguir mejorando."
                 
                 # Limpiar el estado de espera
-                cache.delete(cache_key)
+                django_cache.delete(cache_key)  # Usar django_cache aquí
                 
                 # Guardar en el modelo Feedback directamente
                 from .services.feedback_service import FeedbackService
@@ -871,7 +967,7 @@ def handle_feedback_response(phone_number, feedback_message):
             session.save(update_fields=['feedback_comment_requested'])
             
             # Guardar el ID de la sesión en caché
-            cache.set(cache_key, session.id, 60*30)  # 30 minutos para responder
+            django_cache.set(cache_key, session.id, 60*30)  # Usar django_cache aquí
         else:
             feedback_type = "neutral"
             response_message = "Gracias por tu respuesta. Hemos registrado tu feedback."

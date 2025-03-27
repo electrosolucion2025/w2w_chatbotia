@@ -58,7 +58,7 @@ MIDDLEWARE = [
 ROOT_URLCONF = 'w2w_chatbotia.urls'
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://5f1d-88-24-196-16.ngrok-free.app',
+    'https://c863-88-24-196-16.ngrok-free.app',
 ]
 
 TEMPLATES = [

@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from chatbot.services.conversation_analysis_service import ConversationAnalysisService
 from .models import (
-    Session, Message, Ticket, TicketCategory, TicketComment, TicketImage, User, Company, CompanyInfo, Feedback,
+    ImageAnalysisPrompt, Session, Message, Ticket, TicketCategory, TicketComment, TicketImage, User, Company, CompanyInfo, Feedback,
     PolicyAcceptance, PolicyVersion, AudioMessage, UserCompanyInteraction,
     CompanyAdmin as CompanyAdministrator, LeadStatistics
 )
@@ -1176,12 +1176,80 @@ class TicketAdmin(CompanyFilteredAdmin):
     image_count.short_description = "Imágenes"
     mark_as_in_progress.short_description = "Marcar como En Proceso"
     mark_as_resolved.short_description = "Marcar como Resueltos"
+    
+    def get_urls(self):
+        urls = super().get_urls()
+        from django.urls import path
+        
+        my_urls = [
+            path(
+                '<path:object_id>/readonly/',
+                self.admin_site.admin_view(self.readonly_view),
+                name='chatbot_ticket_readonly',
+            ),
+        ]
+        return my_urls + urls
+    
+    def readonly_view(self, request, object_id):
+        """Vista de solo lectura para tickets"""
+        from django.shortcuts import get_object_or_404
+        from django.template.response import TemplateResponse
+        from chatbot.models import Ticket
+        
+        # Obtener el ticket
+        ticket = get_object_or_404(Ticket, id=object_id)
+        
+        # Verificar permisos
+        if not self.has_view_permission(request, ticket):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied
+        
+        # Contexto para la plantilla
+        context = {
+            'title': f'Ticket: {ticket.title}',
+            'ticket': ticket,
+            'images': ticket.images.all(),
+            'has_change_permission': self.has_change_permission(request, ticket),
+            'app_label': self.model._meta.app_label,
+            'opts': self.model._meta,
+            'is_readonly': True,
+        }
+        
+        # Renderizar plantilla
+        return TemplateResponse(
+            request,
+            'admin/chatbot/ticket/readonly.html',
+            context,
+        )
 
 @admin.register(TicketCategory)
 class TicketCategoryAdmin(CompanyFilteredAdmin):
     list_display = ['name', 'company', 'ask_for_photos']
     list_filter = ['company', 'ask_for_photos']
     search_fields = ['name', 'company__name']
+    
+@admin.register(ImageAnalysisPrompt)
+class ImageAnalysisPromptAdmin(admin.ModelAdmin):
+    list_display = ('name', 'company', 'category', 'is_default', 'model', 'updated_at')
+    list_filter = ('company', 'category', 'is_default', 'model')
+    search_fields = ('name', 'prompt_text', 'company__name', 'category__name')
+    
+    fieldsets = (
+        ('Información Básica', {
+            'fields': ('name', 'company', 'category', 'is_default')
+        }),
+        ('Configuración de IA', {
+            'fields': ('model', 'max_tokens', 'prompt_text')
+        }),
+    )
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        # Filtrar categorías por empresa seleccionada
+        if db_field.name == "category" and request.POST.get('company'):
+            kwargs["queryset"] = TicketCategory.objects.filter(
+                company_id=request.POST.get('company')
+            )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 company_admin_site.register(Session, SessionAdmin)
