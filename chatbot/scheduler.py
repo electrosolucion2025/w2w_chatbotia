@@ -71,16 +71,29 @@ def update_openai_monthly_summaries():
 def update_last_success(job_id):
     """Actualiza el tiempo de la última ejecución exitosa"""
     try:
+        from django_apscheduler.models import DjangoJobExecution
+        
+        # Obtener la última ejecución exitosa
         job_execution = DjangoJobExecution.objects.filter(
             job_id=job_id, 
             status=DjangoJobExecution.SUCCESS
         ).order_by('-run_time').first()
         
         if job_execution:
-            job_execution.finished = timezone.now()
-            job_execution.save(update_fields=['finished'])
+            # En lugar de usar finished, crear una nueva entrada
+            # Esto es más seguro ya que algunos backends de APScheduler
+            # tienen requisitos específicos de formato
+            now = timezone.now()
+            DjangoJobExecution.objects.create(
+                job=job_execution.job,
+                status=DjangoJobExecution.SUCCESS,
+                run_time=now,
+                finished=now,
+                duration=0.0
+            )
+            logger.info(f"Registrada nueva ejecución exitosa para {job_id}")
     except Exception as e:
-        logger.error(f"Error actualizando registro de éxito para {job_id}: {e}")
+        logger.error(f"Error actualizando registro de éxito para {job_id}: {str(e)}")
 
 def cleanup_old_job_executions():
     """
