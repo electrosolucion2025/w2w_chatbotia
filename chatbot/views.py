@@ -324,6 +324,22 @@ def webhook(request):
                         user.waiting_policy_acceptance = False
                         user.save()
                         return HttpResponse('OK', status=200)
+                    
+                    if button_id == "view_full_policies":
+                        logger.info(f"Usuario {user.whatsapp_number} solicita ver políticas completas")
+                        
+                        # Obtener la política activa
+                        policy = PolicyVersion.objects.filter(active=True).first()
+                        if not policy:
+                            whatsapp.send_message(from_phone, "Lo sentimos, no se encontraron las políticas detalladas. Por favor, contacta con soporte.")
+                            return HttpResponse('OK', status=200)
+                            
+                        # Enviar políticas detalladas
+                        responses = whatsapp.send_full_policy_details(from_phone, policy)
+                        logger.info(f"Enviados {len(responses)} mensajes con detalles de políticas al usuario {user.whatsapp_number}")
+                        
+                        # No procesar más este mensaje
+                        return HttpResponse('OK', status=200)
                         
                 else:
                     # Primer mensaje o mensaje sin respuesta a políticas
@@ -669,22 +685,22 @@ def webhook(request):
             if metadata.get("type") == "interactive" and "button_id" in metadata:
                 button_id = metadata.get("button_id")
                 
-                # Manejar botón para ver políticas completas
-                if button_id == "view_full_policies":
-                    logger.info(f"Usuario {user.whatsapp_number} solicita ver políticas completas")
+                # # Manejar botón para ver políticas completas
+                # if button_id == "view_full_policies":
+                #     logger.info(f"Usuario {user.whatsapp_number} solicita ver políticas completas")
                     
-                    # Obtener la política activa
-                    policy = PolicyVersion.objects.filter(active=True).first()
-                    if not policy:
-                        whatsapp.send_message(from_phone, "Lo sentimos, no se encontraron las políticas detalladas. Por favor, contacta con soporte.")
-                        return HttpResponse('OK', status=200)
+                #     # Obtener la política activa
+                #     policy = PolicyVersion.objects.filter(active=True).first()
+                #     if not policy:
+                #         whatsapp.send_message(from_phone, "Lo sentimos, no se encontraron las políticas detalladas. Por favor, contacta con soporte.")
+                #         return HttpResponse('OK', status=200)
                         
-                    # Enviar políticas detalladas
-                    responses = whatsapp.send_full_policy_details(from_phone, policy)
-                    logger.info(f"Enviados {len(responses)} mensajes con detalles de políticas al usuario {user.whatsapp_number}")
+                #     # Enviar políticas detalladas
+                #     responses = whatsapp.send_full_policy_details(from_phone, policy)
+                #     logger.info(f"Enviados {len(responses)} mensajes con detalles de políticas al usuario {user.whatsapp_number}")
                     
-                    # No procesar más este mensaje
-                    return HttpResponse('OK', status=200)
+                #     # No procesar más este mensaje
+                #     return HttpResponse('OK', status=200)
                 
                 # Procesar botones de feedback
                 if button_id in ["positive", "negative", "comment"]:
