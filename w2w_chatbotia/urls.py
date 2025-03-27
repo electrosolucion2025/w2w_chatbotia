@@ -28,5 +28,4 @@ urlpatterns = [
     path('admin/create-company-admin/', create_company_admin, name='create_company_admin'),
 ]
 
-if settings.DEBUG or not settings.AWS_ACCESS_KEY_ID:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
