@@ -205,7 +205,7 @@ class EmailService:
                 </div>
                 
                 <div style="margin-top: 30px;">
-                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" 
+                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/" 
                        style="background-color: #3498db; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">
                         Ver detalles del ticket
                     </a>
@@ -228,7 +228,7 @@ class EmailService:
             
             El ticket incluye {ticket.images.count()} imagen(es).
             
-            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/
+            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/
             """
             
             # Enviar emails a cada destinatario
@@ -251,16 +251,21 @@ class EmailService:
     
     def send_ticket_image_notification(self, ticket, image):
         """
-        Envía una notificación por email cuando se añade una nueva imagen a un ticket
-        
-        Args:
-            ticket: Objeto Ticket con los datos del ticket
-            image: Objeto TicketImage con los datos de la imagen
-        
-        Returns:
-            bool: True si se envió correctamente, False en caso contrario
+        Envía una notificación por email cuando se añade una imagen a un ticket existente
         """
         try:
+            # Verificar si ya se envió notificación para esta imagen
+            from django.core.cache import cache
+            cache_key = f"email_sent_image_{image.id}"
+            
+            if cache.get(cache_key):
+                logger.info(f"Notificación ya enviada para imagen {image.id}. Evitando duplicado.")
+                return True
+            
+            # Marcar como enviada (con TTL de 24 horas)
+            cache.set(cache_key, True, 60 * 60 * 24)
+            
+            # Resto del código para enviar el email...
             # Verificar destinatarios
             admin_emails = self._get_admin_emails_for_company(ticket.company)
             
@@ -288,7 +293,7 @@ class EmailService:
                 </div>
                 
                 <div style="margin-top: 30px;">
-                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/" 
+                    <a href="{settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/" 
                     style="background-color: #3498db; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">
                         Ver detalles del ticket
                     </a>
@@ -306,7 +311,7 @@ class EmailService:
             Descripción de la nueva imagen:
             {image.ai_description[:500]}
             
-            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/change/
+            Ver detalle: {settings.BASE_URL}/admin/chatbot/ticket/{ticket.id}/readonly/
             """
             
             # Enviar emails a cada destinatario

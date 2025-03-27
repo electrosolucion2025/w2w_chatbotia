@@ -1,9 +1,10 @@
 import logging
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.utils import timezone
 
-from chatbot.models import CompanyAdmin, Ticket, TicketImage, User
+from chatbot.models import CompanyAdmin, Ticket, TicketCategory, TicketImage, User
 from chatbot.services.image_processing_service import ImageProcessingService
 from .openai_service import OpenAIService
 from chatbot.services.whatsapp_service import WhatsAppService
@@ -102,6 +103,17 @@ class ConversationService:
         Maneja mensajes con imágenes y los procesa como posibles tickets
         """
         try:
+            # Verificar si esta imagen ya fue procesada
+            from django.core.cache import cache
+            cache_key = f"processed_media_{media_id}_{from_phone}"
+            
+            if cache.get(cache_key):
+                logger.warning(f"Imagen duplicada detectada: {media_id}. Ignorando.")
+                return "Estoy procesando tu imagen, dame un momento..."
+            
+            # Marcar como en proceso (con TTL de 1 hora)
+            cache.set(cache_key, True, 60 * 60)
+            
             # Obtener usuario
             user = User.objects.get(whatsapp_number=from_phone)
             
@@ -129,9 +141,18 @@ class ConversationService:
                 logger.error(f"El archivo descargado no existe: {absolute_path}")
                 return "Lo siento, hubo un problema al procesar la imagen. Por favor, intenta nuevamente."
             
-            # Procesar la imagen con IA
+            # CAMBIO: Usar el nuevo método de análisis con detección de categoría
             image_service = ImageProcessingService()
-            image_analysis = image_service.analyze_image(absolute_path)
+            image_result = image_service.analyze_image_with_category_detection(
+                absolute_path,
+                company_id=company.id,
+                message_text=message_text
+            )
+            
+            # Extraer resultados
+            image_analysis = image_result['analysis']
+            detected_category_id = image_result['detected_category_id']
+            category_certainty = image_result['certainty']
             
             # SIMPLIFICADO: Buscar un ticket existente SOLO en la sesión actual
             active_ticket = None
@@ -150,9 +171,16 @@ class ConversationService:
                 ticket_image = TicketImage(
                     ticket=active_ticket,
                     image=relative_path,
-                    ai_description=image_analysis
+                    ai_description=image_analysis,
+                    whatsapp_media_id=media_id  # Añadir este campo
                 )
-                ticket_image.save()
+                
+                # Intentar guardar, manejar error de duplicado
+                try:
+                    ticket_image.save()
+                except IntegrityError:
+                    logger.warning(f"Esta imagen ya existe para el ticket {active_ticket.id}")
+                    return "Esta imagen ya ha sido procesada para el ticket actual."
                 
                 # MEJORADO: Actualizar descripción del ticket con contexto de la conversación
                 if message_text or conversation_context:
@@ -168,18 +196,31 @@ class ConversationService:
                         active_ticket.description += "\n".join(update_text)
                         active_ticket.save()
                         
+                # Re-analizar con el prompt específico de la categoría
+                if active_ticket.category:
+                    detailed_analysis = image_service.analyze_image(
+                        absolute_path,
+                        company_id=company.id,
+                        category_id=active_ticket.category.id
+                    )
+                    
+                    # Actualizar la descripción de la imagen si es más detallada
+                    if len(detailed_analysis) > len(image_analysis):
+                        ticket_image.ai_description = detailed_analysis
+                        ticket_image.save()
+                        
                 # Notificar a administradores
                 self.notify_new_image(active_ticket, ticket_image)
                 
                 # Mensaje con información más clara para el usuario
                 if ticket_image.ticket.images.count() > 1:
-                    return (
+                    response_message = (
                         f"¡Gracias! He añadido esta imagen a tu reporte actual '{active_ticket.title}'. "
                         f"Ahora tienes {ticket_image.ticket.images.count()} imágenes en este reporte. "
                         f"Un técnico lo revisará pronto."
                     )
                 else:
-                    return f"¡Gracias! He añadido esta imagen a tu reporte '{active_ticket.title}'. Un técnico lo revisará pronto."
+                    response_message = f"¡Gracias! He añadido esta imagen a tu reporte '{active_ticket.title}'. Un técnico lo revisará pronto."
                 
             else:
                 # MEJORADO: Usar contexto de conversación para crear la descripción
@@ -195,8 +236,16 @@ class ConversationService:
                     full_description = "Reporte con imagen sin descripción textual"
                 
                 # Crear un nuevo ticket
-                # Determinar categoría basada en el análisis de imagen y texto
-                category = image_service.detect_issue_category(full_description, image_analysis, company.id)
+                # Usar categoría detectada si tiene buena certeza
+                if detected_category_id and category_certainty > 0.7:
+                    category = TicketCategory.objects.get(id=detected_category_id)
+                else:
+                    # Si no, usar el método existente para detectar categoría
+                    category = image_service.detect_issue_category(
+                        full_description, 
+                        image_analysis, 
+                        company.id
+                    )
                 
                 # Crear título automático considerando el contexto completo
                 title_prompt = f"Genera un título breve (máximo 10 palabras) para un ticket de soporte basado en esta descripción: '{full_description}' y este análisis de imagen: '{image_analysis[:100]}...'"
@@ -227,11 +276,34 @@ class ConversationService:
                 self.notify_new_ticket(ticket)
                 
                 # Mensaje más informativo para el usuario
-                return (
+                response_message = (
                     f"He creado un nuevo reporte con tu imagen: '{ticket.title}'. "
                     f"Puedes enviar más fotos o detalles sobre este problema en esta misma conversación "
                     f"y lo añadiré a este mismo reporte."
                 )
+                
+            # NUEVO: Después de procesar la imagen, añadir información al historial de conversación
+            # Esto es crítico para que OpenAI tenga contexto en las siguientes interacciones
+            
+            # 1. Registrar que el usuario envió una imagen
+            if message_text:
+                image_message = f"[El usuario envió una imagen con el texto: '{message_text}']"
+            else:
+                image_message = "[El usuario envió una imagen sin texto adicional]"
+                
+            self.add_message(from_phone, image_message, is_from_user=True)
+            
+            # 2. Registrar el análisis de la imagen como mensaje del asistente
+            # Crear un mensaje resumido del análisis
+            analysis_summary = f"[He analizado tu imagen. Puedo ver: {image_analysis}...]"
+            
+            self.add_message(from_phone, analysis_summary, is_from_user=False)
+            
+            # 3. Añadir la respuesta al historial de conversación
+            self.add_message(from_phone, response_message, is_from_user=False)
+            
+            # Devolver la respuesta como siempre
+            return response_message
                 
         except Exception as e:
             logger.error(f"Error procesando imagen: {e}")
