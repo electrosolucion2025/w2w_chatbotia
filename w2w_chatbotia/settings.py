@@ -1,9 +1,14 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Determinar entorno
+ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
+
+# Cargar variables de entorno desde archivo .env en desarrollo
+if ENVIRONMENT != 'production':
+    load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -14,18 +19,12 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-# Get the base allowed hosts from environment variable
-base_hosts = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# Get the allowed hosts from environment variable
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
-# For development, allow all domains
-# This is not recommended for production use
-# and should be replaced with specific domains in production.
-if DEBUG:
-    # This allow any host in developtment mode
+# En desarrollo, permitir todos los hosts si está habilitado en .env
+if DEBUG and ENVIRONMENT == 'development':
     ALLOWED_HOSTS = ['*']
-else:
-    # In production, restrict to specific hosts
-    ALLOWED_HOSTS = base_hosts
 
 # Application definition
 INSTALLED_APPS = [
@@ -38,28 +37,38 @@ INSTALLED_APPS = [
     'django.contrib.humanize',
     'chatbot',
     'django_apscheduler',
+    'whitenoise.runserver_nostatic',  # Añadido para manejar estáticos en producción
 ]
 
 # Configuración de django_apscheduler
-APSCHEDULER_DATETIME_FORMAT = 'N j, Y, f:s a'  # Formato de fecha y hora para los trabajos programados
-APSCHEDULER_RUN_NOW_TIMEOUT = 25  # Timeout para ejecutar trabajos programados
+APSCHEDULER_DATETIME_FORMAT = 'N j, Y, f:s a'
+APSCHEDULER_RUN_NOW_TIMEOUT = 25
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Añadido para servir estáticos
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'chatbot.middleware.CompanyFilterMiddleware',  # Middleware personalizado
+    'chatbot.middleware.CompanyFilterMiddleware',
 ]
 
 ROOT_URLCONF = 'w2w_chatbotia.urls'
 
+# Actualizar CSRF_TRUSTED_ORIGINS para incluir dominio de Railway
 CSRF_TRUSTED_ORIGINS = [
     'https://c863-88-24-196-16.ngrok-free.app',
 ]
+
+# Añadir dominio de Railway si estamos en producción
+if ENVIRONMENT == 'production':
+    railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN') or os.getenv('RAILWAY_DOMAIN')
+    if railway_domain:
+        CSRF_TRUSTED_ORIGINS.append(f'https://{railway_domain}')
+        ALLOWED_HOSTS.append(railway_domain)
 
 TEMPLATES = [
     {
@@ -79,10 +88,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'w2w_chatbotia.wsgi.application'
 
-
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
+# Database - usar DATABASE_URL si está disponible (Railway lo proporciona automáticamente)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -94,10 +100,16 @@ DATABASES = {
     }
 }
 
+# Soporte para DATABASE_URL (proporcionado por Railway)
+DATABASE_URL = os.getenv('DATABASE_URL')
+if ENVIRONMENT == 'production' and DATABASE_URL:
+    import dj_database_url
+    DATABASES['default'] = dj_database_url.config(
+        default=DATABASE_URL, 
+        conn_max_age=600
+    )
 
 # Password validation
-# https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -113,32 +125,31 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
 
-
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Media files
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Base URL for links in emails
+# Base URL
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
+# Actualizar BASE_URL automáticamente en producción
+if ENVIRONMENT == 'production':
+    railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN') or os.getenv('RAILWAY_DOMAIN')
+    if railway_domain:
+        BASE_URL = f"https://{railway_domain}"
 
 # OpenAI API settings
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
@@ -187,14 +198,9 @@ LOGGING = {
             'propagate': True,
         },
         'chatbot': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
+            'handlers': ['console', 'file'] if ENVIRONMENT != 'production' else ['console'],
+            'level': 'INFO' if ENVIRONMENT == 'production' else 'DEBUG',
             'propagate': True,
         },
     },
 }
-
-# APPEND_SLASH = False  # Disable appending a slash to URLs
-
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
