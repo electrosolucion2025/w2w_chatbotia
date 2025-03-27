@@ -42,7 +42,19 @@ INSTALLED_APPS = [
 
 # Configuración de django_apscheduler
 APSCHEDULER_DATETIME_FORMAT = 'N j, Y, f:s a'
-APSCHEDULER_RUN_NOW_TIMEOUT = 25
+APSCHEDULER_RUN_NOW_TIMEOUT = 60
+SCHEDULER_CONFIG = {
+    "apscheduler.jobstores.default": {
+        "class": "django_apscheduler.jobstores:DjangoJobStore"
+    },
+    "apscheduler.executors.default": {
+        "class": "apscheduler.executors.pool:ThreadPoolExecutor",
+        "max_workers": "4"
+    },
+    "apscheduler.job_defaults.coalesce": "true",
+    "apscheduler.job_defaults.max_instances": "1",
+    "apscheduler.timezone": "UTC",
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
